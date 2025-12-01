@@ -2,6 +2,213 @@ For this question, please set the context to cluster2 by running:
 
 kubectl config use-context cluster2
 
+### q3
+
+```
+For this question, please set the context to cluster2 by running:
+
+
+kubectl config use-context cluster2
+
+
+
+In the ckad-job namespace, create a cronjob named simple-node-job to run every 30 minutes to list all the running processes inside a container that used node image (the command needs to be run in a shell).
+
+
+
+In Unix-based operating systems, ps -eaf can be use to list all the running processes.
+
+Solution
+Create a YAML file with the content as below:
+
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: simple-node-job
+  namespace: ckad-job
+spec:
+  schedule: "*/30 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: simple-node-job
+            image: node
+            imagePullPolicy: IfNotPresent
+            command:
+            - /bin/sh
+            - -c
+            - ps -eaf
+          restartPolicy: OnFailure
+
+
+
+Then use kubectl apply -f file_name.yaml to create the required object.
+```
+
+```
+Task
+SECTION: SERVICES AND NETWORKING
+For this question, please set the context to cluster3 by running:
+
+
+kubectl config use-context cluster3
+
+
+We have an external webserver running on student-node which is exposed at port 9999.
+
+We have also created a service called external-webserver-ckad01-svcn that can connect to our local webserver from within the cluster3 but, at the moment, it is not working as expected.
+
+
+
+Fix the issue so that other pods within cluster3 can use external-webserver-ckad01-svcn service to access the webserver.
+
+
+Solution
+Let's check if the webserver is working or not:
+
+
+student-node ~ ➜  curl student-node:9999
+...
+<h1>Welcome to nginx!</h1>
+...
+
+
+
+
+Now we will check if service is correctly defined:
+
+student-node ~ ➜  kubectl describe svc external-webserver-ckad01-svcn
+Name:              external-webserver-ckad01-svcn
+Namespace:         default
+.
+.
+Endpoints:         <none> # there are no endpoints for the service
+
+As we can see there is no endpoints specified for the service, hence we won't be able to get any output. Since we can not destroy any k8s object, let's create the endpoint manually for this service as shown below:
+
+
+student-node ~ ➜  export IP_ADDR=$(ifconfig eth0 | grep 'inet ' | awk '{print $2}')
+
+student-node ~ ➜ kubectl apply -f - <<EOF
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: external-webserver-ckad01-svcn
+  labels:
+    kubernetes.io/service-name: external-webserver-ckad01-svcn
+addressType: IPv4
+ports:
+  - protocol: TCP
+    port: 9999
+endpoints:
+  - addresses:
+      - $IP_ADDR
+EOF
+
+...
+```
+
+### Q14
+
+```
+For this question, please set the context to cluster2 by running:
+
+
+kubectl config use-context cluster2
+
+
+
+Create a custom resource my-anime of kind Anime with the below specifications:
+
+
+Name of Anime: Death Note
+Episode Count: 37
+
+
+TIP: You may find the respective CRD with anime substring in it.
+
+Solution
+student-node ~ ➜  kubectl config use-context cluster2
+Switched to context "cluster2".
+
+student-node ~ ➜  kubectl get crd | grep -i anime
+animes.animes.k8s.io
+
+student-node ~ ➜  kubectl get crd animes.animes.k8s.io \
+                 -o json \
+                 | jq .spec.versions[].schema.openAPIV3Schema.properties.spec.properties
+{
+  "animeName": {
+    "type": "string"
+  },
+  "episodeCount": {
+    "maximum": 52,
+    "minimum": 24,
+    "type": "integer"
+  }
+}
+
+student-node ~ ➜  k api-resources | grep anime
+animes                            an           animes.k8s.io/v1alpha1                 true         Anime
+
+student-node ~ ➜  cat << YAML | kubectl apply -f -
+ apiVersion: animes.k8s.io/v1alpha1
+ kind: Anime
+ metadata:
+   name: my-anime
+ spec:
+   animeName: "Death Note"
+   episodeCount: 37
+YAML
+anime.animes.k8s.io/my-anime created
+
+student-node ~ ➜  k get an my-anime
+NAME       AGE
+my-anime   23s
+```
+
+### Q15
+
+```
+Task
+SECTION: APPLICATION ENVIRONMENT, CONFIGURATION and SECURITY
+
+
+For this question, please set the context to cluster1 by running:
+
+
+kubectl config use-context cluster1
+
+
+
+Create a ConfigMap named ckad04-config-multi-env-files-aecs in the default namespace from the environment(env) files provided at /root/ckad04-multi-cm directory.
+
+Solution
+student-node ~ ➜  kubectl config use-context cluster1
+Switched to context "cluster1".
+
+student-node ~ ➜  kubectl create configmap ckad04-config-multi-env-files-aecs \
+         --from-env-file=/root/ckad04-multi-cm/file1.properties \
+         --from-env-file=/root/ckad04-multi-cm/file2.properties
+configmap/ckad04-config-multi-env-files-aecs created
+
+student-node ~ ➜  k get cm ckad04-config-multi-env-files-aecs -o yaml
+apiVersion: v1
+data:
+  allowed: "true"
+  difficulty: fairlyEasy
+  exam: ckad
+  modetype: openbook
+  practice: must
+  retries: "2"
+kind: ConfigMap
+metadata:
+  name: ckad04-config-multi-env-files-aecs
+  namespace: default
+```
+
 ### Q3
 
 In the ckad-job namespace, create a cronjob named simple-node-job to run every 30 minutes to list all the running processes inside a container that used node image (the command needs to be run in a shell).
