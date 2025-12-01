@@ -209,6 +209,91 @@ metadata:
   namespace: default
 ```
 
+```
+For this question, please set the context to cluster1 by running:
+
+
+kubectl config use-context cluster1
+
+
+
+Update the newly created pod simple-webapp-aom with a readinessProbe using the given specifications.
+
+Configure an HTTP readiness probe with:
+
+path value set to /ready
+
+port number to access container is 8080
+
+initialDelaySeconds set to 15 (to allow app startup time)
+
+
+
+Note: You need to recreate the pod to add the readiness probe configuration.
+
+Solution
+Use the following YAML file and create a file - for example, simple-webapp-aom.yaml:
+
+cat <<EOF > simple-webapp-aom.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: simple-webapp-aom
+  labels:
+    name: simple-webapp-aom
+spec:
+  containers:
+  - name: simple-webapp
+    image: kodekloud/webapp-delayed-start
+    ports:
+    - containerPort: 8080
+    readinessProbe:
+      httpGet:
+        path: /ready
+        port: 8080
+      initialDelaySeconds: 15
+      periodSeconds: 5
+EOF
+
+To recreate the pod, run the command:
+
+kubectl replace -f simple-webapp-aom.yaml --force
+```
+
+```
+Task
+SECTION: APPLICATION OBSERVABILITY AND MAINTENANCE
+
+For this question, please set the context to cluster1 by running:
+
+
+kubectl config use-context cluster1
+
+Pod manifest file is already given under the /root/ directory called ckad-pod-busybox.yaml.
+
+There is error with manifest file correct the file and create resource.
+
+Solution
+You will see following error
+
+student-node ~ ➜  kubectl create -f ckad-pod-busybox.yaml
+Error from server (BadRequest): error when creating "ckad-pod-busybox.yaml": Pod in version "v1" cannot be handled as a Pod.
+
+Use the following yaml file and create resource
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ckad-pod-busybox
+spec:
+  containers:
+    - command:
+        - sleep
+        - "3600"
+      image: busybox
+      name: pods-simple-container
+```
+
 ### Q3
 
 In the ckad-job namespace, create a cronjob named simple-node-job to run every 30 minutes to list all the running processes inside a container that used node image (the command needs to be run in a shell).
