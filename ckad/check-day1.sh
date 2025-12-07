@@ -74,19 +74,26 @@ check_q12() {
 check_q13() {
   local ok=1
 
-  # ConfigMap nginx-config exists
+  # ConfigMap nginx-config exists and has index.html
   local idx
   idx=$(kubectl get configmap nginx-config -n day1-env -o jsonpath='{.data.index\.html}' 2>/dev/null)
   [[ -z "$idx" ]] && ok=0
 
-  # Pod cm-volume-pod exists and mounts configMap to /usr/share/nginx/html
-  local cmname mount
-  cmname=$(kubectl get pod cm-volume-pod -n day1-env \
-    -o jsonpath='{.spec.volumes[?(@.name=="web-content")].configMap.name}' 2>/dev/null)
-  mount=$(kubectl get pod cm-volume-pod -n day1-env \
-    -o jsonpath='{.spec.containers[0].volumeMounts[?(@.name=="web-content")].mountPath}' 2>/dev/null)
+  # Pod cm-volume-pod exists
+  kubectl get pod cm-volume-pod -n day1-env >/dev/null 2>&1 || ok=0
 
-  [[ "$cmname" != "nginx-config" ]] && ok=0
+  # Find any volume that uses nginx-config
+  local cmname
+  cmname=$(kubectl get pod cm-volume-pod -n day1-env \
+    -o jsonpath='{.spec.volumes[?(@.configMap.name=="nginx-config")].name}' 2>/dev/null)
+
+  [[ -z "$cmname" ]] && ok=0
+
+  # Check that same volume is mounted at /usr/share/nginx/html
+  local mount
+  mount=$(kubectl get pod cm-volume-pod -n day1-env \
+    -o jsonpath="{.spec.containers[0].volumeMounts[?(@.name==\"$cmname\")].mountPath}" 2>/dev/null)
+
   [[ "$mount" != "/usr/share/nginx/html" ]] && ok=0
 
   if [[ $ok -eq 1 ]]; then
@@ -95,6 +102,7 @@ check_q13() {
     fail "1.3" "cm-volume-pod or nginx-config not configured correctly"
   fi
 }
+
 
 # 1.4 mix-api Deployment with secret + configmap env
 check_q14() {

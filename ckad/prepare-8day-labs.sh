@@ -1,11 +1,4 @@
 
----
-
-## 2️⃣ Environment Setup Script: `prepare-8day-labs.sh`
-
-This sets up all namespaces and base/broken objects used in Days 1–6.
-
-```bash
 #!/bin/bash
 set -euo pipefail
 
