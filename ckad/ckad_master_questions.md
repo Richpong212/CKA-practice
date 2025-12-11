@@ -1,300 +1,406 @@
-# CKAD Practice Exam – 20 Tasks (Exam Style)
+# ✅ **CKAD Practice Exam – 25 Scenario-Based Tasks (2025 Edition)**
 
-The cluster is preconfigured. Use the existing resources where applicable.  
-Unless otherwise specified, use namespace `default`.
-
----
-
-## Question 1
-
-Namespace `prod` contains a Deployment named `db-api` with hard-coded environment variables `USER` and `PASSWORD`.
-
-Update the configuration to:
-
-1. Create a Secret named `db-credentials` in namespace `prod` containing the values for `USER` and `PASSWORD`.
-2. Modify Deployment `db-api` so that the container reads `USER` and `PASSWORD` from the Secret using `valueFrom.secretKeyRef`.
-
-Do not change the Deployment name or namespace.
+_Cluster is preconfigured. Use existing resources where applicable.
+Unless otherwise specified, work in namespace `default`._
 
 ---
 
-## Question 2
+# **CKAD – Q01: Convert Hardcoded Env Vars into a Secret and Update the Deployment**
 
-In namespace `default`, the following resources exist:
+A Deployment named **billing-api** exists in namespace `default`. The Pod specification contains two hardcoded environment variables:
 
-- Deployment `web-deploy-main`
-- Service `web-svc`
-- Ingress `web-bad-ingress`
+- `DB_USER=admin`
+- `DB_PASS=SuperSecret123`
 
-The Ingress does not correctly route HTTP traffic to `web-svc`.
+Storing sensitive information directly in environment variables violates security best practices, and the Deployment must be updated.
 
-Reconfigure Ingress `web-bad-ingress` so that HTTP requests to path `/` are forwarded to Service `web-svc` on port `8080` using a valid `pathType`.
+**Task:**
 
----
-
-## Question 3
-
-In namespace `default`, the following resources exist:
-
-- Deployment `api-deployment`
-- Service `api-svc` exposing port `3000`
-
-Create an Ingress named `api-ing` in namespace `default` that:
-
-- Routes host `api.example.com`
-- Path `/`
-- To Service `api-svc` on port `3000`.
-
-Use the current stable Ingress API version.
+1. Create a Secret named `billing-secret` containing keys `DB_USER` and `DB_PASS` with their respective values.
+2. Patch or edit the Deployment so that the Pod no longer defines plaintext env vars and instead loads them using `valueFrom.secretKeyRef`.
+3. Ensure the updated Deployment rolls out successfully and Pods use the Secret-based environment variables.
 
 ---
 
-## Question 4
+# **CKAD – Q02: Fix a Broken Ingress That Routes to the Wrong Service and Port**
 
-In namespace `netpol-lab`:
+An Ingress named **store-ingress** exists. Requests to `/shop` return a 502 error.
 
-- Pods `frontend`, `backend`, and `database` already exist.
-- NetworkPolicies `allow-frontend-to-backend`, `allow-backend-to-db`, `deny-all`, and `allow-frontend-http` already exist.
+Upon inspecting the Ingress, you observe:
 
-The Pod labels do not currently match the NetworkPolicies.
+- The service name is incorrect.
+- The service port is referencing a non-existent port.
+- The pathType is invalid for the current Kubernetes API version.
 
-Without modifying any NetworkPolicy objects, update the labels on Pods `frontend`, `backend`, and `database` so that traffic is allowed in the following chain:
+A valid Service named `store-svc` exists, serving on port `8080`.
 
-`frontend` → `backend` → `database`.
+**Task:**
 
----
-
-## Question 5
-
-In namespace `dev`, perform the following:
-
-1. Create a Pod named `heavy-pod` with:
-   - Image: `nginx`
-   - CPU request: `200m`
-   - CPU limit: `500m`
-   - Memory request: `128Mi`
-   - Memory limit: `256Mi`
-2. Create a ResourceQuota named `dev-quota` that enforces:
-   - Maximum number of Pods: `10`
-   - Total CPU requests: `2` (cores)
-   - Total memory requests: `4Gi`
-
-Ensure both resources are created in namespace `dev`.
+1. Correct the Ingress rules so that path `/shop` (pathType: `Prefix`) forwards traffic to `store-svc:8080`.
+2. Save and apply the configuration so that the Ingress is functional.
 
 ---
 
-## Question 6
+# **CKAD – Q03: Create a Host-Based Ingress for an Internal API**
 
-On the node’s filesystem, directory `/root/app` contains a valid `Dockerfile`.
+A Deployment named **internal-api** exposes port `3000`. A Service named `internal-api-svc` selects it correctly.
 
-Using the available container tooling:
+The application team wants external access using hostname:
+`internal.company.local`.
 
-1. Build an image named `tool:v2` using `/root/app` as the build context.
-2. Save this image into the file `/root/tool.tar` as a container image archive.
+**Task:**
 
-Do not change the directory layout.
+Create an Ingress named `internal-api-ingress` that:
 
----
-
-## Question 7
-
-In namespace `default`, the following resources exist:
-
-- Deployment `app-stable` with labels `app=app`, `version=v1`
-- Service `app-service` selecting `app=app`
-
-Create an additional Deployment named `app-canary` in namespace `default` with:
-
-- Labels: `app=app`, `version=v2`
-- Image: `nginx`
-- Replicas: `1`
-
-Ensure that both `app-stable` and `app-canary` Pods are selected by `app-service`.
+- Accepts traffic for host `internal.company.local`.
+- Forwards `/` to service `internal-api-svc` on port `3000`.
+- Uses the stable Ingress API.
 
 ---
 
-## Question 8
+# **CKAD – Q04: Repair Pod Authorization Errors by Applying Correct RBAC**
 
-In namespace `default`, the following resources exist:
+In namespace `meta`, a Deployment named **dev-deployment** produces the following log error:
 
-- Deployment `web-app` with Pods labeled `app=web`
-- Service `web-app-svc` with an incorrect selector
+> Error from server (Forbidden): deployments.apps is forbidden:
+> User "system:serviceaccount:meta:default" cannot list resource "deployments" in API group "apps" in the namespace "meta".
 
-Update Service `web-app-svc` so that it correctly selects the Pods created by Deployment `web-app`.
+This indicates the running Pod lacks RBAC permissions for querying Deployments.
 
-Do not rename any existing resources.
+**Task:**
 
----
-
-## Question 9
-
-In namespace `default`, create a CronJob named `backup-cron` with the following requirements:
-
-- Schedule: every 2 minutes (`*/2 * * * *`)
-- Image: `busybox`
-- The container prints `backing up` to standard output.
-- Pods created by the Job must not restart after completion.
-
-Use the current stable CronJob API.
+1. Create a ServiceAccount named `dev-sa` in namespace `meta`.
+2. Create a Role `dev-deploy-role` in namespace `meta` permitting verbs `get`, `list`, `watch` on resource `deployments`.
+3. Create a RoleBinding `dev-deploy-rb` binding the Role to the ServiceAccount.
+4. Update `dev-deployment` to use the new ServiceAccount.
+5. Ensure new Pods no longer log the error.
 
 ---
 
-## Question 10
+# **CKAD – Q05: Pod Failing Due to Missing File – Use Init Container & emptyDir**
 
-In namespace `default`, create a CronJob named `workers-batch` with the following requirements:
+A Pod named **startup-pod** is failing with:
 
-- Schedule: every minute (`* * * * *`)
-- Image: `busybox`
-- The container prints `processing` to standard output.
-- Each Job created by the CronJob must be configured with:
-  - `completions: 4`
-  - `parallelism: 2`
-  - `backoffLimit: 3`
-- Pods created by the Job must not restart after completion.
+> /app/start.sh: No such file or directory
 
-Use the current stable CronJob API.
+You inspect the manifest and confirm:
 
----
+- The main container expects file `/app/start.sh`.
+- The file is not present inside the image.
+- An init process must generate it before startup.
 
-## Question 11
+**Task:**
 
-In namespace `default`, Deployment `web-deploy` exists with a container named `web` and no security context.
+Recreate `startup-pod` with:
 
-Update Deployment `web-deploy` so that:
+1. An `emptyDir` volume mounted at `/app`.
+2. An initContainer that:
 
-- At the Pod level, the security context sets `runAsUser` to `1000`.
-- At the container level for container `web`, capability `NET_ADMIN` is added.
+   - Writes executable script `/app/start.sh` containing `echo service started`.
 
-Apply the change so that the updated Deployment rolls out successfully.
+3. A main container that executes `/app/start.sh`.
+4. Ensure the Pod reaches the `Running` state.
 
 ---
 
-## Question 12
+# **CKAD – Q06: Build, Tag, and Export a Docker Image (OCI Format)**
 
-In namespace `rbac-lab`:
+A directory `/root/api-app` contains a valid Dockerfile.
 
-- ServiceAccount `wrong-sa` exists.
-- Pod `audit-pod` uses ServiceAccount `wrong-sa` and runs `kubectl get pods --all-namespaces` but does not have the required permissions.
+**Task:**
 
-Perform the following:
-
-1. Create a ServiceAccount named `audit-sa` in namespace `rbac-lab`.
-2. Create a Role named `audit-role` in namespace `rbac-lab` that grants `get`, `list`, and `watch` on resource `pods`.
-3. Create a RoleBinding named `audit-rb` in namespace `rbac-lab` that binds `audit-role` to ServiceAccount `audit-sa`.
-4. Reconfigure Pod `audit-pod` to use ServiceAccount `audit-sa`.
+1. Build an image named `api-app:2.1` using the directory as the context.
+2. Save the built image in **OCI format** to `/root/api-app.tar`.
+3. Do NOT push to any registry.
 
 ---
 
-## Question 13
+# **CKAD – Q07: Apply Pod Resource Requests + Namespace ResourceQuota**
 
-In namespace `default`, Deployment `accounts-api` exists with a container named `accounts` that listens on container port `8080`.
+In namespace `dev`, application Pods must not exceed allocated cluster resources.
 
-Update Deployment `accounts-api` to add a readiness probe to container `accounts` with the following properties:
+**Task:**
 
-- HTTP GET request to path `/ready`
-- Port `8080`
-- `initialDelaySeconds: 5`
+1. Create a Pod named `resource-pod` using image `nginx` with:
 
-Ensure the Deployment is updated successfully.
+   - CPU request: `200m`, limit: `500m`
+   - Memory request: `128Mi`, limit: `256Mi`
+
+2. Create a ResourceQuota named `dev-quota` enforcing:
+
+   - Max Pods: `10`
+   - Total CPU requests: `2`
+   - Total Memory requests: `4Gi`
 
 ---
 
-## Question 14
+# **CKAD – Q08: Fix Deployment Using Deprecated API Version**
 
-In namespace `default`, Pod `livecheck` exists with a single container using image `nginx` and container port `80`.
+A manifest located at `/root/old.yaml` contains:
 
-Modify the configuration so that Pod `livecheck` has a liveness probe on the container with:
+- Deprecated API version for Deployment
+- Missing `.spec.selector`
+- Invalid values for `maxSurge` or `maxUnavailable`
 
-- HTTP GET request to path `/health`
+**Task:**
+
+1. Modify the manifest so it uses `apps/v1`.
+2. Add a valid `.spec.selector` matching Pod labels.
+3. Correct the deployment strategy to valid values.
+4. Apply the Deployment successfully.
+
+---
+
+# **CKAD – Q09: Create a Canary Deployment for Live Traffic Testing**
+
+A Deployment named `app-stable` exists with label `version=v1`.
+A Service named `app-svc` routes traffic to Pods labeled `app=core`.
+
+**Task:**
+
+Create a canary Deployment `app-canary` that:
+
+- Uses labels `app=core`, `version=v2`
+- Runs image `nginx`
+- Has 1 replica
+- Ensures the Service `app-svc` load balances across both Deployments
+
+---
+
+# **CKAD – Q10: Fix Broken Service Selector Mismatch**
+
+A Deployment named `web-app` creates Pods labeled `app=webapp`.
+A Service named `web-app-svc` currently fails to route traffic.
+
+You discover the Service selector does not match the Pod labels.
+
+**Task:**
+
+Correct the Service selector so that it correctly selects the Deployment’s Pods.
+
+---
+
+# **CKAD – Q11: Configure a Liveness Probe on an Existing Pod**
+
+A Pod named `healthz` exists, running `nginx` on port `80`.
+It restarts because Kubernetes cannot detect liveness correctly.
+
+**Task:**
+
+Add a liveness probe:
+
+- HTTP GET `/healthz`
 - Port `80`
-- `initialDelaySeconds: 5`
+- initialDelaySeconds: `5`
 
-If direct editing is not possible, you may delete and recreate Pod `livecheck` with the required liveness probe.
-
----
-
-## Question 15
-
-In namespace `default`, Deployment `payments` has undergone a rollout to an invalid or non-working image.
-
-Perform the following:
-
-1. Roll back Deployment `payments` to the previous working revision.
-2. Verify that the rollout has completed successfully and that the Deployment is using the working image.
-
-Do not create a new Deployment.
+If the Pod cannot be modified in place, delete and recreate it.
 
 ---
 
-## Question 16
+# **CKAD – Q12: Add a Readiness Probe to a Deployment (Your Exam Weakness)**
 
-On the node’s filesystem, file `/root/old.yaml` contains a Deployment manifest using a deprecated API version and an invalid rolling update configuration.
+Deployment `shop-api` exposes container port `8080`.
 
-Update `/root/old.yaml` so that:
+**Task:**
 
-- It uses `apiVersion: apps/v1`.
-- It specifies a valid `.spec.selector` that matches the Pod template labels.
-- The rolling update strategy under `.spec.strategy` is valid (for example, valid values for `maxSurge` and `maxUnavailable`).
+Add a readinessProbe:
 
-Apply the updated manifest so that Deployment `old-deploy` is created successfully.
+- HTTP GET `/ready`
+- Port `8080`
+- initialDelaySeconds: 5
 
----
-
-## Question 17
-
-In namespace `default`, Pod `broken-init` exists with:
-
-- Image: `busybox`
-- Command: `/app/start.sh`
-
-The Pod fails because `/app/start.sh` does not exist.
-
-Recreate Pod `broken-init` so that:
-
-- It uses an `emptyDir` volume mounted at `/app` for both:
-  - An init container that:
-    - Creates the file `/app/start.sh` containing `echo start app`
-    - Marks `/app/start.sh` as executable
-  - The main container that:
-    - Executes `/app/start.sh` as its command
-
-Ensure the recreated Pod reaches the `Running` state.
+Apply changes so that the Deployment successfully rolls out.
 
 ---
 
-## Question 18
+# **CKAD – Q13: Create a CronJob with Completions and Backoff Limit**
 
-In namespace `netpol-lab`:
+The operations team needs a periodic worker.
 
-- Pod `auth` currently has labels `role=wrong-auth` and `env=dev`.
-- Pod `db` has labels `role=db` and `env=prod`.
-- NetworkPolicies `allow-auth-ingress` and `allow-db-egress` select Pods with `role=auth` and `env=prod`.
+**Task:**
 
-Without modifying any NetworkPolicy objects, update the labels on Pod `auth` so that it matches the Pod selectors used by `allow-auth-ingress` and `allow-db-egress`.
+Create a CronJob named `metrics-job` that:
 
----
+- Runs every **1 minute**
+- Uses image `busybox`
+- Executes command: `echo collecting`
+- Job template must set:
 
-## Question 19
+  - completions: 4
+  - parallelism: 2
+  - backoffLimit: 3
 
-In namespace `default`, the following resources exist:
-
-- Service `path-test-svc`
-- Deployment `path-test-deploy`
-- Ingress `bad-path-ingress` with an invalid `pathType` for the HTTP path.
-
-Update Ingress `bad-path-ingress` so that its HTTP path configuration uses a valid `pathType` (for example, `Prefix`) for path `/`, and continues to route traffic to Service `path-test-svc` on port `80`.
+- restartPolicy: Never
 
 ---
 
-## Question 20
+# **CKAD – Q14: ServiceAccount Fix Based on Pod Logs**
 
-In namespace `default`, Deployment `backend` exists with a container named `backend` using image `nginx:1.25`.
+A Pod named `audit-runner` executes:
 
-Perform the following sequence:
+```
+kubectl get pods --all-namespaces
+```
 
-1. Pause the rollout of Deployment `backend`.
-2. While the rollout is paused, update the image for container `backend` to a newer valid image tag (for example, `nginx:1.27`).
-3. Resume the rollout of Deployment `backend`.
-4. Verify that the rollout completes successfully and that the new image is in use.
+But the logs show:
+
+> pods is forbidden: User "system:serviceaccount:default:wrong-sa" cannot list resource "pods"
+
+**Task:**
+
+1. Create a new service account `audit-sa`.
+2. Create Role `audit-role` allowing `get`, `list`, `watch` on Pods.
+3. Bind Role → ServiceAccount using `RoleBinding audit-rb`.
+4. Modify Pod `audit-runner` to use `audit-sa`.
 
 ---
+
+# **CKAD – Q15: Capture Logs of a Pod into Node Filesystem**
+
+A manifest `/opt/winter/winter.yaml` defines Pod `winter`. It is already deployed.
+
+**Task:**
+
+1. Retrieve logs from the running Pod.
+2. Write them into file `/opt/winter/logs.txt` on the node.
+3. Ensure the Pod remains running.
+
+---
+
+# **CKAD – Q16: Identify the Pod Consuming the Most CPU**
+
+In namespace `cpu-load`, several Pods generate CPU stress.
+
+**Task:**
+
+1. Identify the Pod consuming the most CPU using Metrics API.
+2. Write ONLY the Pod name to:
+   `/opt/winter/highest.txt`.
+
+---
+
+# **CKAD – Q17: Create NodePort Service for an Existing Deployment**
+
+A Deployment named `video-api` exposes port `9090`.
+
+**Task:**
+
+Create a Service named `video-svc`:
+
+- Type: NodePort
+- TargetPort: 9090
+- Selector must match Deployment Pods
+- Expose port `80` externally
+
+---
+
+# **CKAD – Q18: Fix Broken Ingress PathType**
+
+An Ingress named `client-ingress` fails with an API validation error:
+
+> Invalid value for pathType
+
+**Task:**
+
+1. Update Ingress to use a valid `pathType: Prefix`
+2. Ensure `/` maps to service `client-svc:80`
+
+---
+
+# **CKAD – Q19: Apply SecurityContext on Deployment (runAsUser + Capabilities)**
+
+A Deployment named `syncer` must follow internal security policies.
+
+**Task:**
+
+1. At Pod level: `runAsUser: 1000`
+2. At container level: add capability `NET_ADMIN`
+3. Apply and validate rollout
+
+---
+
+# **CKAD – Q20: Create Pod Running Redis 3.2 with Exposed Port**
+
+In namespace `cachelayer`, create a Pod named `redis32`:
+
+- Image: `redis:3.2`
+- Expose port `6379`
+- Keep running after startup
+
+---
+
+# **CKAD – Q21: Combine Two Existing NetworkPolicies by Fixing Pod Labels**
+
+Namespace `netpol-chain` contains:
+
+- Pods: `frontend`, `backend`, `database`
+- NetworkPolicies:
+
+  - `allow-frontend-to-backend`
+  - `allow-backend-to-db`
+  - `deny-all`
+
+Policies are correct, **but Pod labels do not match policy selectors**.
+
+**Task:**
+
+Modify Pod labels only (not policies) so that:
+
+`frontend → backend → database` communication becomes allowed.
+
+---
+
+# **CKAD – Q22: Resume Paused Rollout & Apply New Image**
+
+Deployment `dashboard` was manually paused during a previous rollout.
+Changing the image now results in:
+
+> rollout paused
+
+**Task:**
+
+1. Update the Deployment to use image `nginx:1.25`.
+2. Resume the rollout.
+3. Verify Pods update successfully.
+
+---
+
+# **CKAD – Q23: Create Service of Type ExternalName**
+
+Team wants to reference an external database service.
+
+**Task:**
+
+Create a Service named `external-db`:
+
+- Type: ExternalName
+- externalName: `database.prod.internal`
+
+---
+
+# **CKAD – Q24: Fix Misconfigured CronJob (Wrong Restart Policy)**
+
+A CronJob named `hourly-report` exists but keeps restarting failed Pods indefinitely.
+
+**Task:**
+
+Update the Job template to use:
+
+- restartPolicy: Never
+- backoffLimit: 2
+
+Ensure successful job behavior.
+
+---
+
+# **CKAD – Q25: Deployment with Missing Selector & Wrong Labels**
+
+A Deployment manifest at `/root/broken-app.yaml` fails to apply with:
+
+> selector does not match template labels
+
+**Task:**
+
+1. Correct `.spec.selector.matchLabels`
+2. Correct `.spec.template.metadata.labels`
+3. Apply the Deployment so that Pods are created successfully.

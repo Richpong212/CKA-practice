@@ -1,95 +1,499 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
-# If anything fails, print the line number so it's easier to debug
-trap 'echo "[ERROR] prep.sh failed at line $LINENO. Scroll up to see the last kubectl error."' ERR
+echo "=== CKAD practice environment prep ==="
 
-echo "=== CKAD Master Practice Environment Setup ==="
-
-# Small helper for final sanity checks
-check() {
-  local kind="$1"
-  local name="$2"
-  local ns="$3"
-
-  if kubectl get "$kind" "$name" -n "$ns" >/dev/null 2>&1; then
-    echo "[OK]  $kind/$name in namespace $ns"
-  else
-    echo "[MISSING]  $kind/$name in namespace $ns  (something above may have failed)"
-  fi
-}
-
-# ---------------------------------------------------------
+# -------------------------
 # Namespaces
-# ---------------------------------------------------------
-echo "[*] Creating namespaces..."
-kubectl create namespace prod --dry-run=client -o yaml | kubectl apply -f -
-kubectl create namespace dev --dry-run=client -o yaml | kubectl apply -f -
-kubectl create namespace netpol-lab --dry-run=client -o yaml | kubectl apply -f -
-kubectl create namespace rbac-lab --dry-run=client -o yaml | kubectl apply -f -
+# -------------------------
+for ns in meta dev cachelayer netpol-chain cpu-load production; do
+  if ! kubectl get ns "$ns" >/dev/null 2>&1; then
+    echo "Creating namespace: $ns"
+    kubectl create ns "$ns"
+  else
+    echo "Namespace $ns already exists"
+  fi
+done
 
-# ---------------------------------------------------------
-# Q1: db-api Deployment with hard-coded env in 'prod'
-# ---------------------------------------------------------
-echo "[*] Setting up Q1: db-api deployment with hard-coded env..."
-cat <<'EOF' | kubectl apply -f -
+# -------------------------
+# Q1 – billing-api Deployment with hardcoded env vars
+# -------------------------
+echo "Creating Deployment billing-api (hardcoded env vars)..."
+kubectl apply -f - <<'EOF'
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: db-api
-  namespace: prod
+  name: billing-api
+  namespace: default
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: db-api
+      app: billing-api
   template:
     metadata:
       labels:
-        app: db-api
+        app: billing-api
     spec:
       containers:
-        - name: db-api
+        - name: billing
           image: nginx
           env:
-            - name: USER
-              value: "root"
-            - name: PASSWORD
-              value: "admin123"
+            - name: DB_USER
+              value: "admin"
+            - name: DB_PASS
+              value: "SuperSecret123"
 EOF
 
-# ---------------------------------------------------------
-# Q2: Ingress with wrong backend service name and port
-# ---------------------------------------------------------
-echo "[*] Setting up Q2: web-svc + bad ingress to fix..."
-# Service + Deployment that SHOULD be targeted by Ingress
-cat <<'EOF' | kubectl apply -f -
-apiVersion: v1
-kind: Service
-metadata:
-  name: web-svc
-  namespace: default
-spec:
-  selector:
-    app: web
-  ports:
-    - port: 8080
-      targetPort: 80
----
+# -------------------------
+# Q2 – Broken Ingress store-ingress + service / deployment
+# -------------------------
+echo "Creating store deployment, service and broken ingress..."
+kubectl apply -f - <<'EOF'
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: web-deploy-main
+  name: store-deploy
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: store
+  template:
+    metadata:
+      labels:
+        app: store
+    spec:
+      containers:
+        - name: store
+          image: nginx
+          ports:
+            - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: store-svc
+  namespace: default
+spec:
+  selector:
+    app: store
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+# Broken ingress: wrong service name, wrong port, invalid/legacy pathType
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: store-ingress
+  namespace: default
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /shop
+            pathType: Exact   # not what we want for the question
+            backend:
+              service:
+                name: wrong-svc   # wrong on purpose
+                port:
+                  number: 80      # wrong on purpose
+EOF
+
+# -------------------------
+# Q3 – internal-api deployment + service (no ingress yet)
+# -------------------------
+echo "Creating internal-api deployment and service..."
+kubectl apply -f - <<'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: internal-api
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: internal-api
+  template:
+    metadata:
+      labels:
+        app: internal-api
+    spec:
+      containers:
+        - name: api
+          image: nginx
+          ports:
+            - containerPort: 3000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: internal-api-svc
+  namespace: default
+spec:
+  selector:
+    app: internal-api
+  ports:
+    - port: 3000
+      targetPort: 3000
+EOF
+
+# -------------------------
+# Q4 – RBAC problem on dev-deployment in namespace meta
+# -------------------------
+echo "Creating dev-deployment in namespace meta (RBAC issue)..."
+kubectl apply -f - <<'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dev-deployment
+  namespace: meta
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dev-deployment
+  template:
+    metadata:
+      labels:
+        app: dev-deployment
+    spec:
+      serviceAccountName: default   # no special permissions
+      containers:
+        - name: api-client
+          image: bitnami/kubectl:latest
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              while true; do
+                echo "Trying to list deployments in meta..."
+                kubectl get deployments.apps -n meta || true
+                sleep 30
+              done
+EOF
+
+# -------------------------
+# Q5 – startup-pod missing script (no init container yet)
+# -------------------------
+echo "Creating broken startup-pod (missing /app/start.sh)..."
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: startup-pod
+  namespace: default
+spec:
+  containers:
+    - name: app
+      image: busybox
+      command: ["/bin/sh","-c"]
+      args: ["/app/start.sh"]
+EOF
+
+# -------------------------
+# Q6 – Dockerfile at /root/api-app
+# -------------------------
+echo "Preparing /root/api-app with sample Dockerfile..."
+mkdir -p /root/api-app
+cat >/root/api-app/Dockerfile <<'EOF'
+FROM nginx:latest
+RUN echo "CKAD practice image" > /usr/share/nginx/html/index.html
+EOF
+
+# -------------------------
+# Q7 – Namespace dev only (you will add pod + quota)
+# -------------------------
+echo "Namespace dev ready for resource Quota and Pod question."
+
+# -------------------------
+# Q8 – /root/old.yaml with deprecated Deployment config
+# -------------------------
+echo "Writing deprecated deployment manifest to /root/old.yaml..."
+cat >/root/old.yaml <<'EOF'
+apiVersion: apps/v1beta1
+kind: Deployment
+metadata:
+  name: old-deploy
+  namespace: default
+spec:
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app: old-app
+    spec:
+      containers:
+        - name: old-container
+          image: nginx:1.14
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 200%        # intentionally invalid
+      maxUnavailable: -1    # intentionally invalid
+EOF
+
+# -------------------------
+# Q9 – app-stable deployment + app-svc service
+# -------------------------
+echo "Creating app-stable deployment and app-svc..."
+kubectl apply -f - <<'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-stable
   namespace: default
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: web
+      app: core
+      version: v1
   template:
     metadata:
       labels:
-        app: web
+        app: core
+        version: v1
+    spec:
+      containers:
+        - name: app
+          image: nginx
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app-svc
+  namespace: default
+spec:
+  selector:
+    app: core
+  ports:
+    - port: 80
+      targetPort: 80
+EOF
+
+# -------------------------
+# Q10 – web-app deployment + misconfigured web-app-svc
+# -------------------------
+echo "Creating web-app and broken web-app-svc..."
+kubectl apply -f - <<'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-app
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: webapp
+  template:
+    metadata:
+      labels:
+        app: webapp
+    spec:
+      containers:
+        - name: web
+          image: nginx
+          ports:
+            - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-app-svc
+  namespace: default
+spec:
+  selector:
+    app: wronglabel   # intentionally wrong
+  ports:
+    - port: 80
+      targetPort: 80
+EOF
+
+# -------------------------
+# Q11 – healthz pod without liveness probe
+# -------------------------
+echo "Creating healthz pod (no liveness probe yet)..."
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: healthz
+  namespace: default
+spec:
+  containers:
+    - name: web
+      image: nginx
+      ports:
+        - containerPort: 80
+EOF
+
+# -------------------------
+# Q12 – shop-api deployment
+# -------------------------
+echo "Creating shop-api deployment..."
+kubectl apply -f - <<'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shop-api
+  namespace: default
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: shop-api
+  template:
+    metadata:
+      labels:
+        app: shop-api
+    spec:
+      containers:
+        - name: api
+          image: nginx
+          ports:
+            - containerPort: 8080
+EOF
+
+# -------------------------
+# Q14 – audit-runner pod with wrong service account
+# -------------------------
+echo "Creating audit-runner with wrong-sa..."
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: wrong-sa
+  namespace: default
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: audit-runner
+  namespace: default
+spec:
+  serviceAccountName: wrong-sa
+  containers:
+    - name: kubectl
+      image: bitnami/kubectl:latest
+      command: ["/bin/sh","-c"]
+      args:
+        - |
+          while true; do
+            kubectl get pods --all-namespaces || true
+            sleep 30
+          done
+EOF
+
+# -------------------------
+# Q15 & Q16 – winter.yaml + cpu-load namespace pods
+# -------------------------
+echo "Preparing /opt/winter and winter pod..."
+mkdir -p /opt/winter
+cat >/opt/winter/winter.yaml <<'EOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: winter
+  namespace: default
+spec:
+  containers:
+    - name: main
+      image: busybox
+      command: ["/bin/sh","-c"]
+      args: ["while true; do echo winter running; sleep 10; done"]
+EOF
+
+kubectl apply -f /opt/winter/winter.yaml
+
+echo "Creating CPU load pods in namespace cpu-load..."
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: cpu-busy-1
+  namespace: cpu-load
+spec:
+  containers:
+    - name: load
+      image: busybox
+      command: ["/bin/sh","-c"]
+      args: ["while true; do :; done"]
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: cpu-busy-2
+  namespace: cpu-load
+spec:
+  containers:
+    - name: load
+      image: busybox
+      command: ["/bin/sh","-c"]
+      args: ["while true; do :; done"]
+EOF
+
+# -------------------------
+# Q17 – video-api deployment
+# -------------------------
+echo "Creating video-api deployment..."
+kubectl apply -f - <<'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: video-api
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: video-api
+  template:
+    metadata:
+      labels:
+        app: video-api
+    spec:
+      containers:
+        - name: api
+          image: nginx
+          ports:
+            - containerPort: 9090
+EOF
+
+# -------------------------
+# Q18 – client-ingress: write broken manifest to disk, don't apply
+# -------------------------
+echo "Creating client-svc and client-app (Ingress manifest will be on disk only)..."
+kubectl apply -f - <<'EOF'
+apiVersion: v1
+kind: Service
+metadata:
+  name: client-svc
+  namespace: default
+spec:
+  selector:
+    app: client-app
+  ports:
+    - port: 80
+      targetPort: 80
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: client-app
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: client-app
+  template:
+    metadata:
+      labels:
+        app: client-app
     spec:
       containers:
         - name: web
@@ -98,78 +502,69 @@ spec:
             - containerPort: 80
 EOF
 
-# Incorrect ingress to fix (wrong service name/port)
-cat <<'EOF' | kubectl apply -f -
+echo "Writing broken Ingress manifest for client-ingress to /root/client-ingress.yaml..."
+cat >/root/client-ingress.yaml <<'EOF'
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: web-bad-ingress
+  name: client-ingress
   namespace: default
 spec:
   rules:
     - http:
         paths:
           - path: /
-            pathType: Prefix
+            pathType: InvalidType   # intentionally invalid
             backend:
               service:
-                name: wrong-svc-name   # to be fixed to web-svc
+                name: client-svc
                 port:
-                  number: 80           # to be fixed to 8080
+                  number: 80
 EOF
 
-# ---------------------------------------------------------
-# Q3: api-svc Service (Ingress to be created by you)
-# ---------------------------------------------------------
-echo "[*] Setting up Q3: api-svc backend for Ingress..."
-cat <<'EOF' | kubectl apply -f -
-apiVersion: v1
-kind: Service
-metadata:
-  name: api-svc
-  namespace: default
-spec:
-  selector:
-    app: api
-  ports:
-    - port: 3000
-      targetPort: 3000
----
+
+# -------------------------
+# Q19 – syncer deployment (no securityContext yet)
+# -------------------------
+echo "Creating syncer deployment..."
+kubectl apply -f - <<'EOF'
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: api-deployment
+  name: syncer
   namespace: default
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: api
+      app: syncer
   template:
     metadata:
       labels:
-        app: api
+        app: syncer
     spec:
       containers:
-        - name: api
+        - name: sync
           image: nginx
-          ports:
-            - containerPort: 3000
 EOF
 
-# ---------------------------------------------------------
-# Q4: NetworkPolicy lab (netpol-lab ns, 4 NPs + 3 Pods)
-# ---------------------------------------------------------
-echo "[*] Setting up Q4: netpol lab with 4 NetworkPolicies and 3 Pods..."
-# Simple pods
-cat <<'EOF' | kubectl apply -f -
+# -------------------------
+# Q20 – namespace cachelayer (you create redis32 pod)
+# -------------------------
+echo "Namespace cachelayer is ready for redis32 pod."
+
+# -------------------------
+# Q21 – netpol-chain: pods + netpols with mismatched labels
+# -------------------------
+echo "Creating netpol-chain pods and network policies..."
+kubectl apply -f - <<'EOF'
 apiVersion: v1
 kind: Pod
 metadata:
   name: frontend
-  namespace: netpol-lab
+  namespace: netpol-chain
   labels:
-    role: frontend-initial   # intentionally wrong, to be fixed
+    role: wrong-frontend   # intentionally wrong
 spec:
   containers:
     - name: app
@@ -179,9 +574,9 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: backend
-  namespace: netpol-lab
+  namespace: netpol-chain
   labels:
-    role: backend-initial    # intentionally wrong
+    role: wrong-backend    # intentionally wrong
 spec:
   containers:
     - name: app
@@ -191,22 +586,30 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: database
-  namespace: netpol-lab
+  namespace: netpol-chain
   labels:
-    role: db-initial         # intentionally wrong
+    role: wrong-db         # intentionally wrong
 spec:
   containers:
     - name: app
       image: nginx
-EOF
-
-# A few example NetworkPolicies (you'll align labels to these)
-cat <<'EOF' | kubectl apply -f -
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all
+  namespace: netpol-chain
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-frontend-to-backend
-  namespace: netpol-lab
+  namespace: netpol-chain
 spec:
   podSelector:
     matchLabels:
@@ -221,7 +624,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-backend-to-db
-  namespace: netpol-lab
+  namespace: netpol-chain
 spec:
   podSelector:
     matchLabels:
@@ -231,463 +634,83 @@ spec:
         - podSelector:
             matchLabels:
               role: backend
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: deny-all
-  namespace: netpol-lab
-spec:
-  podSelector: {}
-  policyTypes:
-    - Ingress
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: allow-frontend-http
-  namespace: netpol-lab
-spec:
-  podSelector:
-    matchLabels:
-      role: frontend
-  ingress:
-    - ports:
-        - port: 80
 EOF
 
-# ---------------------------------------------------------
-# Q6: Docker build context in /root/app
-# ---------------------------------------------------------
-echo "[*] Setting up Q6: /root/app Docker build context..."
-mkdir -p /root/app
-cat <<'EOF' >/root/app/Dockerfile
-FROM nginx:alpine
-RUN echo '<h1>Tool v2</h1>' > /usr/share/nginx/html/index.html
-EOF
-
-# ---------------------------------------------------------
-# Q7: Canary - stable app-stable + Service
-# ---------------------------------------------------------
-echo "[*] Setting up Q7: app-stable deployment and Service..."
-cat <<'EOF' | kubectl apply -f -
+# -------------------------
+# Q22 – dashboard deployment paused rollout
+# -------------------------
+echo "Creating dashboard deployment and pausing rollout..."
+kubectl apply -f - <<'EOF'
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: app-stable
+  name: dashboard
   namespace: default
 spec:
-  replicas: 4
+  replicas: 2
   selector:
     matchLabels:
-      app: app
-      version: v1
+      app: dashboard
   template:
     metadata:
       labels:
-        app: app
-        version: v1
+        app: dashboard
     spec:
       containers:
-        - name: app
-          image: nginx
-          ports:
-            - containerPort: 80
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: app-service
-  namespace: default
-spec:
-  selector:
-    app: app
-  ports:
-    - port: 80
-      targetPort: 80
+        - name: web
+          image: nginx:1.23
 EOF
 
-# ---------------------------------------------------------
-# Q8: Service with wrong selector
-# ---------------------------------------------------------
-echo "[*] Setting up Q8: Service with wrong selector..."
-# Correct deployment for reference
-cat <<'EOF' | kubectl apply -f -
+kubectl rollout pause deployment/dashboard
+
+# -------------------------
+# Q24 – hourly-report CronJob with bad restart policy
+# -------------------------
+echo "Creating misconfigured hourly-report CronJob..."
+kubectl apply -f - <<'EOF'
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: hourly-report
+  namespace: default
+spec:
+  schedule: "0 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure   # you will adjust this
+          containers:
+            - name: report
+              image: busybox
+              command: ["/bin/sh","-c"]
+              args: ["echo hourly report; sleep 5"]
+EOF
+
+# -------------------------
+# Q25 – broken-app.yaml with mismatched selector/labels
+# -------------------------
+echo "Writing broken app manifest to /root/broken-app.yaml..."
+cat >/root/broken-app.yaml <<'EOF'
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: web-app
+  name: broken-app
   namespace: default
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
-      app: web
+      app: broken   # does NOT match template labels
   template:
     metadata:
       labels:
-        app: web
+        app: different-label   # mismatch on purpose
     spec:
       containers:
         - name: web
           image: nginx
 EOF
 
-# Wrong selector Service
-cat <<'EOF' | kubectl apply -f -
-apiVersion: v1
-kind: Service
-metadata:
-  name: web-app-svc
-  namespace: default
-spec:
-  selector:
-    tier: web     # to be fixed to app: web
-  ports:
-    - port: 80
-      targetPort: 80
-EOF
-
-# ---------------------------------------------------------
-# Q11: web-deploy for SecurityContext
-# ---------------------------------------------------------
-echo "[*] Setting up Q11: web-deploy without securityContext..."
-cat <<'EOF' | kubectl apply -f -
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: web-deploy
-  namespace: default
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: web-sec
-  template:
-    metadata:
-      labels:
-        app: web-sec
-    spec:
-      containers:
-        - name: web
-          image: nginx
-EOF
-
-# ---------------------------------------------------------
-# Q12: RBAC lab - audit-pod in rbac-lab namespace with wrong SA
-# ---------------------------------------------------------
-echo "[*] Setting up Q12: RBAC lab with audit-pod and wrong SA..."
-# A service account that has NO extra permissions
-kubectl create sa wrong-sa -n rbac-lab --dry-run=client -o yaml | kubectl apply -f -
-
-# Pod that will try to list pods and get forbidden logs
-cat <<'EOF' | kubectl apply -f -
-apiVersion: v1
-kind: Pod
-metadata:
-  name: audit-pod
-  namespace: rbac-lab
-spec:
-  serviceAccountName: wrong-sa   # to be replaced with audit-sa by you
-  containers:
-    - name: audit
-      image: bitnami/kubectl:latest
-      command:
-        - sh
-        - -c
-        - "kubectl get pods --all-namespaces && sleep 3600"
-EOF
-
-# ---------------------------------------------------------
-# Q13: accounts-api deployment (for readinessProbe)
-# ---------------------------------------------------------
-echo "[*] Setting up Q13: accounts-api deployment..."
-cat <<'EOF' | kubectl apply -f -
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: accounts-api
-  namespace: default
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: accounts-api
-  template:
-    metadata:
-      labels:
-        app: accounts-api
-    spec:
-      containers:
-        - name: accounts
-          image: nginx
-          ports:
-            - containerPort: 8080
-EOF
-
-# ---------------------------------------------------------
-# Q14: livecheck pod (for livenessProbe)
-# ---------------------------------------------------------
-echo "[*] Setting up Q14: livecheck pod..."
-cat <<'EOF' | kubectl apply -f -
-apiVersion: v1
-kind: Pod
-metadata:
-  name: livecheck
-  namespace: default
-spec:
-  containers:
-    - name: app
-      image: nginx
-      ports:
-        - containerPort: 80
-EOF
-
-# ---------------------------------------------------------
-# Q15: payments deployment with 2 revisions (for rollback)
-# ---------------------------------------------------------
-echo "[*] Setting up Q15: payments deployment with history..."
-# First revision (v1)
-cat <<'EOF' | kubectl apply -f -
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: payments
-  namespace: default
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: payments
-  template:
-    metadata:
-      labels:
-        app: payments
-    spec:
-      containers:
-        - name: payments
-          image: nginx:1.25
-EOF
-# Update to a "bad" image to create second revision
-kubectl set image deploy/payments payments=nginx:bad-tag -n default || true
-
-# ---------------------------------------------------------
-# Q16: old.yaml file with deprecated apiVersion and invalid maxSurge
-# ---------------------------------------------------------
-echo "[*] Creating /root/old.yaml for Q16..."
-cat <<'EOF' >/root/old.yaml
-apiVersion: apps/v1beta1
-kind: Deployment
-metadata:
-  name: old-deploy
-spec:
-  strategy:
-    rollingUpdate:
-      maxSurge: "invalid"
-  template:
-    metadata:
-      labels:
-        app: old
-    spec:
-      containers:
-        - name: old
-          image: nginx
-EOF
-
-# ---------------------------------------------------------
-# Q17: broken-init pod that fails due to missing /app/start.sh
-# ---------------------------------------------------------
-echo "[*] Setting up Q17: broken-init pod..."
-cat <<'EOF' | kubectl apply -f -
-apiVersion: v1
-kind: Pod
-metadata:
-  name: broken-init
-  namespace: default
-spec:
-  containers:
-    - name: app
-      image: busybox
-      command: ["/app/start.sh"]
-      args: []
-EOF
-
-# ---------------------------------------------------------
-# Q18: NetworkPolicies allow-auth-ingress & allow-db-egress + auth pod
-# ---------------------------------------------------------
-echo "[*] Setting up Q18: auth pod + NPs allow-auth-ingress / allow-db-egress..."
-# Auth pod with wrong labels
-cat <<'EOF' | kubectl apply -f -
-apiVersion: v1
-kind: Pod
-metadata:
-  name: auth
-  namespace: netpol-lab
-  labels:
-    role: wrong-auth
-    env: dev
-spec:
-  containers:
-    - name: app
-      image: nginx
----
-apiVersion: v1
-kind: Pod
-metadata:
-  name: db
-  namespace: netpol-lab
-  labels:
-    role: db
-    env: prod
-spec:
-  containers:
-    - name: db
-      image: nginx
-EOF
-
-# NetworkPolicies that expect certain labels
-cat <<'EOF' | kubectl apply -f -
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: allow-auth-ingress
-  namespace: netpol-lab
-spec:
-  podSelector:
-    matchLabels:
-      role: auth
-      env: prod
-  ingress:
-    - from:
-        - podSelector:
-            matchLabels:
-              role: frontend
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: allow-db-egress
-  namespace: netpol-lab
-spec:
-  podSelector:
-    matchLabels:
-      role: auth
-      env: prod
-  egress:
-    - to:
-        - podSelector:
-            matchLabels:
-              role: db
-              env: prod
-EOF
-
-# ---------------------------------------------------------
-# Q19: Ingress with invalid pathType (logically wrong for the question, but valid for the API)
-# ---------------------------------------------------------
-echo "[*] Setting up Q19: Ingress with \"wrong\" pathType to fix..."
-# Backend svc
-cat <<'EOF' | kubectl apply -f -
-apiVersion: v1
-kind: Service
-metadata:
-  name: path-test-svc
-  namespace: default
-spec:
-  selector:
-    app: path-test
-  ports:
-    - port: 80
-      targetPort: 80
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: path-test-deploy
-  namespace: default
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: path-test
-  template:
-    metadata:
-      labels:
-        app: path-test
-    spec:
-      containers:
-        - name: app
-          image: nginx
-          ports:
-            - containerPort: 80
-EOF
-
-# "Bad" ingress: pathType is valid but not what the checker expects (you'll fix it in the question)
-cat <<'EOF' | kubectl apply -f -
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: bad-path-ingress
-  namespace: default
-spec:
-  rules:
-    - http:
-        paths:
-          - path: /
-            pathType: ImplementationSpecific   # to be fixed to Prefix/Exact in the exercise
-            backend:
-              service:
-                name: path-test-svc
-                port:
-                  number: 80
-EOF
-
-# ---------------------------------------------------------
-# Q20: backend deployment for pause/update/resume
-# ---------------------------------------------------------
-echo "[*] Setting up Q20: backend deployment..."
-cat <<'EOF' | kubectl apply -f -
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: backend
-  namespace: default
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: backend
-  template:
-    metadata:
-      labels:
-        app: backend
-    spec:
-      containers:
-        - name: backend
-          image: nginx:1.25
-EOF
-
-echo "=== Base environment created. Running quick sanity checks... ==="
-
-# Key checks so you don't get 'NotFound' surprises
-check deployment db-api        prod
-check deployment web-deploy-main default
-check service    web-svc       default
-check ingress    web-bad-ingress default
-check service    api-svc       default
-check deployment api-deployment default
-check pod        frontend      netpol-lab
-check netpol     allow-frontend-to-backend netpol-lab
-check deployment app-stable    default
-check service    app-service   default
-check deployment web-app       default
-check service    web-app-svc   default
-check deployment web-deploy    default
-check pod        audit-pod     rbac-lab
-check deployment accounts-api  default
-check pod        livecheck     default
-check deployment payments      default
-check pod        broken-init   default
-check ingress    bad-path-ingress default
-check deployment backend       default
-
-echo "=== Environment ready. Use your CKAD practice questions file and start solving! ==="
+echo "=== CKAD practice environment is ready. ==="
+echo "You can now start working through the 25 questions."

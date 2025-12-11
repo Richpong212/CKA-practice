@@ -1,280 +1,383 @@
-````md
-# ⭐ THE CKAD MASTER PRACTICE EXAM (20 QUESTIONS + ANSWERS)
+# CKAD Practice Exam – 25 Tasks (2025-Style)
 
-Everything here is modeled on actual CKAD exam patterns from 2024–2025 and matches the resources created by `prepare-ckad-practice.sh`.
-
-Namespaces used:
-
-- `prod`
-- `dev`
-- `netpol-lab`
-- `rbac-lab`
-- `default`
+The cluster is preconfigured using `prep.sh`.
+Use the existing resources where applicable.
+Unless otherwise specified, use namespace `default`.
 
 ---
 
-## 🔥 QUESTION 1 — Convert Env Vars to Secret (Classic)
+## Question 1 – Move hardcoded env vars to Secret
 
-In namespace `prod`, there is a Deployment `db-api` with hardcoded env vars:
+In namespace `default`, Deployment `billing-api` exists with hard-coded environment variables:
 
-```yaml
-env:
-  - name: USER
-    value: "root"
-  - name: PASSWORD
-    value: "admin123"
-```
-````
+- `DB_USER`
+- `DB_PASS`
 
-**Tasks:**
+Update the configuration to:
 
-1. Create a Secret named `db-credentials` in namespace `prod` with these two keys.
-2. Update Deployment `db-api` so that these env vars are loaded from the Secret (use individual `valueFrom`, not `envFrom`).
+1. Create a Secret named `billing-secret` in namespace `default` containing keys:
 
----
+   - `DB_USER`
+   - `DB_PASS`
 
-### ✅ Answer 1 — Env vars → Secret
+2. Modify Deployment `billing-api` so that the container reads `DB_USER` and `DB_PASS` from this Secret using `valueFrom.secretKeyRef`.
 
-**Create Secret:**
+Do not change the Deployment name or namespace.
+
+### Solution
+
+**Step 1 – Create the Secret**
 
 ```bash
-kubectl create secret generic db-credentials \
-  -n prod \
-  --from-literal=USER=root \
-  --from-literal=PASSWORD=admin123
+kubectl create secret generic billing-secret \
+  --from-literal=DB_USER=admin \
+  --from-literal=DB_PASS=SuperSecret123
 ```
 
-**Edit Deployment:**
+**Step 2 – Patch Deployment env to use Secret**
 
 ```bash
-kubectl edit deploy db-api -n prod
+kubectl edit deploy billing-api
 ```
 
-Change the `env` section on the container to:
+Inside `.spec.template.spec.containers[0].env`, replace:
 
 ```yaml
-env:
-  - name: USER
-    valueFrom:
-      secretKeyRef:
-        name: db-credentials
-        key: USER
-  - name: PASSWORD
-    valueFrom:
-      secretKeyRef:
-        name: db-credentials
-        key: PASSWORD
+- name: DB_USER
+  value: "admin"
+- name: DB_PASS
+  value: "SuperSecret123"
 ```
 
-**Why:** CKAD loves this pattern: move hard-coded creds into a Secret and use `valueFrom.secretKeyRef`.
+with:
+
+```yaml
+- name: DB_USER
+  valueFrom:
+    secretKeyRef:
+      name: billing-secret
+      key: DB_USER
+- name: DB_PASS
+  valueFrom:
+    secretKeyRef:
+      name: billing-secret
+      key: DB_PASS
+```
+
+Save and exit. The Deployment will roll out new Pods.
+
+**Why this works**
+
+- You externalize sensitive data into a Secret and mount it via `env.valueFrom.secretKeyRef`.
+- This matches the real exam theme: “convert env vars to Secret-based configuration.”
+
+**Docs**
+
+- Secrets & env: [https://kubernetes.io/docs/concepts/configuration/secret/](https://kubernetes.io/docs/concepts/configuration/secret/)
 
 ---
 
-## 🔥 QUESTION 2 — Ingress Fix (Wrong Service Name / Port)
+## Question 2 – Fix broken Ingress backend and pathType
 
-In namespace `default`:
+In namespace `default`, the following resources exist:
 
-- Service `web-svc` exists and exposes port `8080`.
-- Deployment `web-deploy-main` backs it.
-- Ingress `web-bad-ingress` exists but does **not** route correctly.
+- Deployment `store-deploy`
+- Service `store-svc`
+- Ingress `store-ingress` (currently misconfigured)
 
-You discover that `web-bad-ingress` has:
+The Ingress must:
 
-- Wrong Service name
-- Wrong Service port
+- Route HTTP requests to path `/shop`
+- Use `pathType: Prefix`
+- Forward traffic to Service `store-svc` on port `8080`
 
-**Task:** Fix `web-bad-ingress` so it sends traffic to Service `web-svc` on port `8080`.
+Reconfigure Ingress `store-ingress` accordingly.
+Do not create a new Ingress.
 
----
-
-### ✅ Answer 2 — Ingress: wrong Service name/port
+### Solution
 
 Edit the Ingress:
 
 ```bash
-kubectl edit ingress web-bad-ingress -n default
+kubectl edit ingress store-ingress
 ```
 
-Fix its backend to:
+Update the rule under `.spec.rules[0].http.paths[0]` to:
 
 ```yaml
-spec:
-  rules:
-    - http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: web-svc # correct service name
-                port:
-                  number: 8080 # correct service port
+path: /shop
+pathType: Prefix
+backend:
+  service:
+    name: store-svc
+    port:
+      number: 8080
 ```
 
-**Why:** In `networking.k8s.io/v1`, the backend is nested under `service.name` and `service.port.number`. If either is wrong, routing fails.
+Save and exit.
+
+**Why this works**
+
+- `Prefix` is a valid `pathType` and commonly used.
+- Backend service name and port now match `store-svc:8080`, so traffic from the Ingress actually reaches the Pods behind `store-deploy`.
+
+**Docs**
+
+- Ingress basics: [https://kubernetes.io/docs/concepts/services-networking/ingress/](https://kubernetes.io/docs/concepts/services-networking/ingress/)
 
 ---
 
-## 🔥 QUESTION 3 — Ingress With Hostname
+## Question 3 – Create Ingress for internal API
 
-In namespace `default`, there is:
+In namespace `default`, the following resources exist:
 
-- Service `api-svc` exposing port `3000`.
-- Deployment `api-deployment` backing `api-svc`.
+- Deployment `internal-api`
+- Service `internal-api-svc` exposing port `3000`
 
-**Task:** Create an Ingress named `api-ing` in namespace `default` that:
+Create an Ingress named `internal-api-ingress` in namespace `default` that:
 
-- Routes host `api.example.com`
+- Routes host `internal.company.local`
 - Path `/`
-- To Service `api-svc` on port `3000`.
+- To Service `internal-api-svc` on port `3000`
+- Uses the stable `networking.k8s.io/v1` API
 
----
+### Solution
 
-### ✅ Answer 3 — Ingress with hostname
-
-Create `api-ing.yaml`:
-
-```yaml
+```bash
+cat <<EOF | kubectl apply -f -
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: api-ing
+  name: internal-api-ingress
   namespace: default
 spec:
   rules:
-    - host: api.example.com
+    - host: internal.company.local
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: api-svc
+                name: internal-api-svc
                 port:
                   number: 3000
+EOF
 ```
 
-Apply it:
+**Why this works**
+
+- Uses the stable `networking.k8s.io/v1` API with `spec.rules[].http.paths[].pathType`.
+- The rule matches host + path and routes to the correct service and port.
+
+**Docs**
+
+- Ingress V1 API: [https://kubernetes.io/docs/concepts/services-networking/ingress/](https://kubernetes.io/docs/concepts/services-networking/ingress/)
+
+---
+
+## Question 4 – Fix RBAC for a Deployment using logs hint
+
+In namespace `meta`, Deployment `dev-deployment` exists.
+Its Pods run a `kubectl` loop trying to list Deployments in the same namespace and log an authorization error.
+
+Without deleting the Deployment, perform the following:
+
+1. Create a ServiceAccount `dev-sa` in namespace `meta`.
+2. Create a Role `dev-deploy-role` in namespace `meta` that allows `get`, `list`, and `watch` on resource `deployments` in API group `apps`.
+3. Create a RoleBinding `dev-deploy-rb` in namespace `meta` binding `dev-deploy-role` to `dev-sa`.
+4. Update Deployment `dev-deployment` so that its Pods run using ServiceAccount `dev-sa`.
+
+### Solution
+
+**Step 1 – SA**
 
 ```bash
-kubectl apply -f api-ing.yaml
+kubectl create sa dev-sa -n meta
 ```
 
-**Why:** This is the standard Ingress structure in Kubernetes 1.19+ and what CKAD expects you to know.
-
----
-
-## 🔥 QUESTION 4 — NetworkPolicy Label Assignment
-
-In namespace `netpol-lab` you have 3 Pods:
-
-- `frontend`
-- `backend`
-- `database`
-
-Their labels are currently **wrong** (e.g. `role: frontend-initial`, etc.).
-
-There are 4 existing NetworkPolicies:
-
-- `allow-frontend-to-backend`
-- `allow-backend-to-db`
-- `deny-all`
-- `allow-frontend-http`
-
-**Goal:** Make traffic flow from:
-
-`frontend` → `backend` → `database`
-
-by **only changing Pod labels**, not the NetworkPolicies.
-
----
-
-### ✅ Answer 4 — NetworkPolicy: use correct labels on Pods
-
-Inspect the NetworkPolicies:
+**Step 2 – Role**
 
 ```bash
-kubectl get netpol -n netpol-lab
-kubectl describe netpol allow-frontend-to-backend -n netpol-lab
-kubectl describe netpol allow-backend-to-db -n netpol-lab
-kubectl describe netpol allow-frontend-http -n netpol-lab
+cat <<EOF | kubectl apply -f -
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dev-deploy-role
+  namespace: meta
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch"]
+EOF
 ```
 
-You’ll see selectors like:
-
-```yaml
-# allow-frontend-to-backend
-podSelector:
-  matchLabels:
-    role: backend
----
-from:
-  - podSelector:
-      matchLabels:
-        role: frontend
-
-# allow-backend-to-db
-podSelector:
-  matchLabels:
-    role: db
----
-from:
-  - podSelector:
-      matchLabels:
-        role: backend
-```
-
-Update Pod labels to match:
+**Step 3 – RoleBinding**
 
 ```bash
-kubectl label pod frontend role=frontend -n netpol-lab --overwrite
-kubectl label pod backend role=backend -n netpol-lab --overwrite
-kubectl label pod database role=db -n netpol-lab --overwrite
+kubectl create rolebinding dev-deploy-rb \
+  --role=dev-deploy-role \
+  --serviceaccount=meta:dev-sa \
+  -n meta
 ```
 
-**Why:** NetworkPolicies match **only** by `podSelector.matchLabels`. To “use the correct policies”, you almost always change Pod labels, not the policies.
-
----
-
-## 🔥 QUESTION 5 — Resource Limits + Quota
-
-In namespace `dev`:
-
-1. Create a Pod `heavy-pod` with:
-
-   - CPU requests: `200m`
-   - CPU limits: `500m`
-   - Memory requests: `128Mi`
-   - Memory limits: `256Mi`
-   - Image: `nginx`
-
-2. Create a ResourceQuota `dev-quota` in namespace `dev` with:
-
-   - `pods: 10`
-   - `requests.cpu: 2`
-   - `requests.memory: 4Gi`
-
----
-
-### ✅ Answer 5 — Pod resources + ResourceQuota
-
-Make sure namespace exists (script already does this, but safe):
+**Step 4 – Patch Deployment**
 
 ```bash
-kubectl create ns dev --dry-run=client -o yaml | kubectl apply -f -
+kubectl patch deploy dev-deployment -n meta \
+  -p '{"spec":{"template":{"spec":{"serviceAccountName":"dev-sa"}}}}'
 ```
 
-**Pod:**
+**Why this works**
 
-```yaml
+- The Pod was using the default SA with no RBAC.
+- Granting a Role over `deployments` and binding it to a dedicated SA, then setting that SA on the Deployment, resolves the authorization error.
+
+**Docs**
+
+- RBAC: [https://kubernetes.io/docs/reference/access-authn-authz/rbac/](https://kubernetes.io/docs/reference/access-authn-authz/rbac/)
+
+---
+
+## Question 5 – Fix pod using initContainer + emptyDir
+
+In namespace `default`, Pod `startup-pod` exists and fails because it tries to execute `/app/start.sh`, which does not exist.
+
+Recreate Pod `startup-pod` so that:
+
+- It uses an `emptyDir` volume mounted at `/app`.
+- An init container:
+
+  - Writes `/app/start.sh` with content `echo start app`
+  - Marks it executable
+
+- The main container:
+
+  - Runs `/app/start.sh` as its command
+
+Ensure the recreated Pod reaches `Running` state.
+
+### Solution
+
+Delete and recreate:
+
+```bash
+kubectl delete pod startup-pod
+```
+
+```bash
+cat <<EOF | kubectl apply -f -
 apiVersion: v1
 kind: Pod
 metadata:
-  name: heavy-pod
-  namespace: dev
+  name: startup-pod
+  namespace: default
 spec:
+  volumes:
+    - name: app-vol
+      emptyDir: {}
+  initContainers:
+    - name: init-script
+      image: busybox
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          echo 'echo start app' > /app/start.sh
+          chmod +x /app/start.sh
+      volumeMounts:
+        - name: app-vol
+          mountPath: /app
   containers:
     - name: app
+      image: busybox
+      command: ["/app/start.sh"]
+      volumeMounts:
+        - name: app-vol
+          mountPath: /app
+EOF
+```
+
+**Why this works**
+
+- `emptyDir` shares the filesystem between init and main container.
+- Init container prepares the script and makes it executable before the main container starts.
+
+**Docs**
+
+- Init containers: [https://kubernetes.io/docs/concepts/workloads/pods/init-containers/](https://kubernetes.io/docs/concepts/workloads/pods/init-containers/)
+- Volumes: [https://kubernetes.io/docs/concepts/storage/volumes/](https://kubernetes.io/docs/concepts/storage/volumes/)
+
+---
+
+## Question 6 – Build, tag, and save Docker image
+
+On the node filesystem, directory `/root/api-app` contains a valid `Dockerfile`.
+
+Using available container tools:
+
+1. Build an image named `api-app:2.1` using `/root/api-app` as build context.
+2. Save this image into `/root/api-app.tar` as a container image archive.
+
+Do not modify the directory layout.
+
+### Solution
+
+From the node:
+
+```bash
+cd /root/api-app
+
+docker build -t api-app:2.1 .
+docker save api-app:2.1 -o /root/api-app.tar
+```
+
+(If using `ctr` / `nerdctl`, adapt accordingly, but the idea is the same.)
+
+**Why this works**
+
+- `docker build` uses the Dockerfile in the directory.
+- `docker save` creates a tarball you can upload, import, or scan.
+
+**Docs**
+
+- Docker build/save: [https://docs.docker.com/reference/cli/docker/image/build/](https://docs.docker.com/reference/cli/docker/image/build/)
+- Container runtimes in K8s: [https://kubernetes.io/docs/setup/production-environment/container-runtimes/](https://kubernetes.io/docs/setup/production-environment/container-runtimes/)
+
+---
+
+## Question 7 – Pod resources + namespace ResourceQuota
+
+In namespace `dev`, perform the following:
+
+1. Create a Pod named `resource-pod` with:
+
+   - Image: `nginx`
+   - CPU request: `200m`
+   - CPU limit: `500m`
+   - Memory request: `128Mi`
+   - Memory limit: `256Mi`
+
+2. Create a ResourceQuota named `dev-quota` that enforces:
+
+   - Maximum number of Pods: `10`
+   - Total CPU requests: `2`
+   - Total memory requests: `4Gi`
+
+Ensure both resources are created in namespace `dev`.
+
+### Solution
+
+**Pod**
+
+```bash
+kubectl apply -n dev -f - <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: resource-pod
+spec:
+  containers:
+    - name: web
       image: nginx
       resources:
         requests:
@@ -283,90 +386,121 @@ spec:
         limits:
           cpu: "500m"
           memory: "256Mi"
+EOF
 ```
 
-Apply:
+**ResourceQuota**
 
 ```bash
-kubectl apply -f heavy-pod.yaml
-```
-
-**ResourceQuota:**
-
-```yaml
+kubectl apply -n dev -f - <<EOF
 apiVersion: v1
 kind: ResourceQuota
 metadata:
   name: dev-quota
-  namespace: dev
 spec:
   hard:
     pods: "10"
     requests.cpu: "2"
     requests.memory: "4Gi"
+EOF
+```
+
+**Why this works**
+
+- Requests/limits are set at the container level.
+- ResourceQuota enforces aggregate usage in the namespace.
+
+**Docs**
+
+- Resource requests/limits: [https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/)
+- ResourceQuota: [https://kubernetes.io/docs/concepts/policy/resource-quotas/](https://kubernetes.io/docs/concepts/policy/resource-quotas/)
+
+---
+
+## Question 8 – Fix deprecated manifest and strategy
+
+File `/root/old.yaml` contains a Deployment manifest using a deprecated API version and invalid rolling update configuration.
+
+Update `/root/old.yaml` so that:
+
+- It uses `apiVersion: apps/v1`.
+- It specifies a valid `.spec.selector` that matches Pod template labels `app: old-app`.
+- It has a valid rolling update strategy under `.spec.strategy.rollingUpdate` with sane values.
+
+Apply the updated manifest so that Deployment `old-deploy` is created successfully.
+
+### Solution
+
+Edit the file:
+
+```bash
+vi /root/old.yaml
+```
+
+Turn it into something like:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: old-deploy
+  namespace: default
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: old-app
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+  template:
+    metadata:
+      labels:
+        app: old-app
+    spec:
+      containers:
+        - name: old-container
+          image: nginx:1.14
 ```
 
 Apply:
 
 ```bash
-kubectl apply -f dev-quota.yaml
+kubectl apply -f /root/old.yaml
 ```
 
-**Why:** CKAD checks correct `resources` syntax on Pods and `ResourceQuota` syntax on namespaces.
+**Why this works**
+
+- `apps/v1` requires `.spec.selector` and matching template labels.
+- `maxSurge` and `maxUnavailable` must be valid ints or percentages.
+
+**Docs**
+
+- Deployments: [https://kubernetes.io/docs/concepts/workloads/controllers/deployment/](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/)
 
 ---
 
-## 🔥 QUESTION 6 — Docker Build/Tag/Save (OCI)
+## Question 9 – Create a canary Deployment behind existing Service
 
-On the node filesystem, the script created `/root/app` with a `Dockerfile`.
+In namespace `default`, the following resources exist:
 
-**Task:**
+- Deployment `app-stable` with labels `app=core`, `version=v1`
+- Service `app-svc` with selector `app=core`
 
-- Build an image named `tool:v2` using `/root/app`.
-- Save it as `/root/tool.tar`.
+Create an additional Deployment named `app-canary` with:
 
----
+- Labels: `app=core`, `version=v2`
+- Image: `nginx`
+- Replicas: `1`
 
-### ✅ Answer 6 — Docker build/tag/save
+Ensure both `app-stable` and `app-canary` Pods are selected by `app-svc`.
+
+### Solution
 
 ```bash
-cd /root/app
-docker build -t tool:v2 .
-docker save tool:v2 -o /root/tool.tar
-```
-
-**Why:** `docker save` creates an OCI-compatible tarball, which is exactly what “save to OCI format” means in these exams.
-
----
-
-## 🔥 QUESTION 7 — Canary Deployment
-
-In namespace `default`, you already have:
-
-- Deployment `app-stable`
-
-  - `image: nginx` (representing `app:v1`)
-  - `replicas: 4`
-  - labels: `app: app`, `version: v1`
-
-- Service `app-service` with selector `app: app`.
-
-**Task:** Create a canary deployment:
-
-- name: `app-canary`
-- image: `nginx` (representing `app:v2`)
-- replicas: `1`
-- labels: `app: app`, `version: v2`
-
-So that both `app-stable` and `app-canary` are behind `app-service`.
-
----
-
-### ✅ Answer 7 — Canary deployment
-
-`app-stable` is already labeled correctly by the script. Create canary:
-
-```yaml
+kubectl apply -f - <<EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -376,149 +510,204 @@ spec:
   replicas: 1
   selector:
     matchLabels:
-      app: app
+      app: core
       version: v2
   template:
     metadata:
       labels:
-        app: app
+        app: core
         version: v2
     spec:
       containers:
         - name: app
           image: nginx
-          ports:
-            - containerPort: 80
+EOF
 ```
 
-Apply:
+**Why this works**
 
-```bash
-kubectl apply -f app-canary.yaml
-```
+- Both Deployments share `app=core`.
+- Service `app-svc` selects `app=core`, so traffic is split between v1 and v2 Pods = canary pattern.
 
-Service `app-service`:
+**Docs**
 
-```yaml
-spec:
-  selector:
-    app: app
-```
-
-will now send traffic to both v1 and v2 Pods.
-
-**Why:** Canary is just “small replicas + same Service selector”. Traffic split is based on replica counts when labels match.
+- Canary pattern (general): [https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#updating-a-deployment](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#updating-a-deployment)
 
 ---
 
-## 🔥 QUESTION 8 — Fix Service Selector
+## Question 10 – Fix Service selector for Deployment
 
-In namespace `default`:
+In namespace `default`, the following resources exist:
 
-- Deployment `web-app` has Pods with label: `app: web`.
-- Service `web-app-svc` has a wrong selector:
+- Deployment `web-app` with Pods labeled `app=webapp`
+- Service `web-app-svc` with an incorrect selector
 
-```yaml
-selector:
-  tier: web
-```
+Update Service `web-app-svc` so it correctly selects Pods created by Deployment `web-app`.
 
-**Task:** Fix Service `web-app-svc` so it correctly selects Pods from `web-app`.
+Do not rename resources.
 
----
-
-### ✅ Answer 8 — Fix Service selector
-
-Edit the Service:
+### Solution
 
 ```bash
-kubectl edit svc web-app-svc -n default
+kubectl edit svc web-app-svc
 ```
 
 Change:
 
 ```yaml
-selector:
-  tier: web
+spec:
+  selector:
+    app: wronglabel
 ```
 
 to:
 
 ```yaml
-selector:
-  app: web
-```
-
-**Why:** Services route based on Pod labels; if the selector doesn’t match, endpoints list is empty and the Service doesn’t work.
-
----
-
-## 🔥 QUESTION 9 — CronJob Creation
-
-**Task:** In namespace `default`, create a CronJob:
-
-- name: `backup-cron`
-- schedule: `"*/2 * * * *"` (every 2 minutes)
-- image: `busybox`
-- command: `echo backing up`
-
----
-
-### ✅ Answer 9 — CronJob basic
-
-Create `backup-cron.yaml`:
-
-```yaml
-apiVersion: batch/v1
-kind: CronJob
-metadata:
-  name: backup-cron
-  namespace: default
 spec:
-  schedule: "*/2 * * * *"
-  jobTemplate:
-    spec:
-      template:
-        spec:
-          restartPolicy: Never
-          containers:
-            - name: backup
-              image: busybox
-              command: ["sh", "-c", "echo backing up"]
+  selector:
+    app: webapp
 ```
 
-Apply:
+Save and exit.
+
+**Why this works**
+
+- Service selectors must match Pod labels to direct traffic.
+- Once fixed, endpoints will be populated with the `web-app` Pods.
+
+**Docs**
+
+- Services: [https://kubernetes.io/docs/concepts/services-networking/service/](https://kubernetes.io/docs/concepts/services-networking/service/)
+
+---
+
+## Question 11 – Add livenessProbe to Pod
+
+In namespace `default`, Pod `healthz` exists with a single container:
+
+- Image: `nginx`
+- Container port: `80`
+
+Modify configuration so that Pod `healthz` has a liveness probe:
+
+- HTTP GET path `/healthz`
+- Port `80`
+- `initialDelaySeconds: 5`
+
+If direct editing is not possible, delete and recreate `healthz` with the required liveness probe.
+
+### Solution
+
+Simplest: delete and recreate:
 
 ```bash
-kubectl apply -f backup-cron.yaml
+kubectl delete pod healthz
 ```
 
-**Why:** CronJob → `jobTemplate.spec.template.spec` → Pod spec. This nesting always shows up.
+```bash
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: healthz
+  namespace: default
+spec:
+  containers:
+    - name: web
+      image: nginx
+      ports:
+        - containerPort: 80
+      livenessProbe:
+        httpGet:
+          path: /healthz
+          port: 80
+        initialDelaySeconds: 5
+        periodSeconds: 10
+EOF
+```
+
+**Why this works**
+
+- Liveness probe checks container health and restarts it when failing.
+- You’re matching the required path, port, and initial delay.
+
+**Docs**
+
+- Probes: [https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/)
 
 ---
 
-## 🔥 QUESTION 10 — CronJob With Completions + BackoffLimit
+## Question 12 – Add readinessProbe to Deployment
 
-**Task:** In namespace `default`, create a CronJob `workers-batch`:
+In namespace `default`, Deployment `shop-api` exists with a container listening on port `8080`.
 
-- schedule: `* * * * *` (every minute)
-- completions: `4`
-- parallelism: `2`
-- backoffLimit: `3`
-- image: `busybox`
-- command: `echo processing`
+Update Deployment `shop-api` to add a readiness probe with:
 
----
+- HTTP GET path `/ready`
+- Port `8080`
+- `initialDelaySeconds: 5`
 
-### ✅ Answer 10 — CronJob with completions + backoffLimit
+Ensure the Deployment rolls out successfully.
 
-`workers-batch.yaml`:
+### Solution
+
+```bash
+kubectl edit deploy shop-api
+```
+
+Under container spec:
 
 ```yaml
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: 8080
+  initialDelaySeconds: 5
+  periodSeconds: 10
+```
+
+Save; check rollout:
+
+```bash
+kubectl rollout status deploy shop-api
+```
+
+**Why this works**
+
+- Readiness probe gates sending traffic to the Pod until it’s ready.
+- This is heavily used in CKAD for application readiness.
+
+**Docs**
+
+- Readiness probes: [https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/)
+
+---
+
+## Question 13 – Create CronJob with completions/parallelism/backoff
+
+In namespace `default`, create a CronJob named `metrics-job` with:
+
+- Schedule: every minute (`* * * * *`)
+- Image: `busybox`
+- Container prints `collecting metrics` to stdout
+- Job template configuration:
+
+  - `completions: 4`
+  - `parallelism: 2`
+  - `backoffLimit: 3`
+
+- Pods must not restart after completion (`restartPolicy: Never`)
+
+Use the stable CronJob API.
+
+### Solution
+
+```bash
+kubectl apply -f - <<EOF
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: workers-batch
+  name: metrics-job
   namespace: default
 spec:
   schedule: "* * * * *"
@@ -531,460 +720,233 @@ spec:
         spec:
           restartPolicy: Never
           containers:
-            - name: worker
+            - name: metrics
               image: busybox
-              command: ["sh", "-c", "echo processing"]
+              command: ["/bin/sh","-c"]
+              args: ["echo collecting metrics; sleep 5"]
+EOF
 ```
 
-Apply:
+**Why this works**
 
-```bash
-kubectl apply -f workers-batch.yaml
-```
+- `jobTemplate.spec` holds Job fields like `completions`, `parallelism`, `backoffLimit`.
+- Pod template uses `restartPolicy: Never`, as required.
 
-**Why:**
+**Docs**
 
-- `completions`: how many pods must succeed per job.
-- `parallelism`: how many pods run at the same time.
-- `backoffLimit`: how many failed retries per job before considering it failed.
+- CronJobs: [https://kubernetes.io/docs/concepts/workloads/controllers/cron-jobs/](https://kubernetes.io/docs/concepts/workloads/controllers/cron-jobs/)
 
 ---
 
-## 🔥 QUESTION 11 — Deployment SecurityContext
+## Question 14 – Fix RBAC for audit Pod in default namespace
 
-In namespace `default`, Deployment `web-deploy` exists with a container `web` and **no** security context.
-
-**Task:** Edit `web-deploy` so that:
-
-- Pod-level `runAsUser` is `1000`.
-- Container `web` has capability `NET_ADMIN` added.
-
----
-
-### ✅ Answer 11 — Deployment SecurityContext
-
-Edit:
-
-```bash
-kubectl edit deploy web-deploy -n default
-```
-
-Under `spec.template.spec`:
-
-```yaml
-spec:
-  template:
-    spec:
-      securityContext:
-        runAsUser: 1000
-      containers:
-        - name: web
-          image: nginx
-          securityContext:
-            capabilities:
-              add: ["NET_ADMIN"]
-```
-
-**Why:** Pod-level `runAsUser` sets default UID for containers; container-level `capabilities.add` adds `NET_ADMIN` just for that container.
-
----
-
-## 🔥 QUESTION 12 — RBAC With ServiceAccount (Hard)
-
-In namespace `rbac-lab`:
+In namespace `default`:
 
 - ServiceAccount `wrong-sa` exists.
-- Pod `audit-pod` uses `wrong-sa` and tries to run:
+- Pod `audit-runner` uses ServiceAccount `wrong-sa` and runs `kubectl get pods --all-namespaces` in a loop but lacks permissions.
 
-  ```sh
-  kubectl get pods --all-namespaces
-  ```
+Perform:
 
-  It fails due to permissions.
+1. Create a ServiceAccount `audit-sa` in namespace `default`.
+2. Create a Role `audit-role` in namespace `default` that grants `get`, `list`, `watch` on resource `pods`.
+3. Create a RoleBinding `audit-rb` in namespace `default` binding `audit-role` to `audit-sa`.
+4. Reconfigure Pod `audit-runner` to use `audit-sa`.
 
-**Task:**
+### Solution
 
-1. Create ServiceAccount `audit-sa` in `rbac-lab`.
-2. Create Role `audit-role` in `rbac-lab` that allows `get`, `list`, `watch` on `pods`.
-3. Create RoleBinding `audit-rb` binding `audit-role` to `audit-sa`.
-4. Update `audit-pod` to use `audit-sa`.
-
----
-
-### ✅ Answer 12 — RBAC with ServiceAccount
-
-Create SA:
+**SA**
 
 ```bash
-kubectl create sa audit-sa -n rbac-lab
+kubectl create sa audit-sa
 ```
 
-Create Role:
+**Role**
 
 ```bash
-kubectl create role audit-role \
-  --verb=get --verb=list --verb=watch \
-  --resource=pods \
-  -n rbac-lab
+kubectl apply -f - <<EOF
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: audit-role
+  namespace: default
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+EOF
 ```
 
-Create RoleBinding:
+**RoleBinding**
 
 ```bash
 kubectl create rolebinding audit-rb \
   --role=audit-role \
-  --serviceaccount=rbac-lab:audit-sa \
-  -n rbac-lab
+  --serviceaccount=default:audit-sa \
+  -n default
 ```
 
-Patch Pod to use `audit-sa`:
+**Recreate Pod with SA**
+
+Easiest: delete and recreate using `kubectl edit` or manual manifest. For speed, patch:
 
 ```bash
-kubectl patch pod audit-pod -n rbac-lab \
+kubectl patch pod audit-runner \
   -p '{"spec":{"serviceAccountName":"audit-sa"}}'
 ```
 
-(Alternatively, delete and recreate the Pod with the new SA.)
+(If patch fails because of immutable fields, delete and re-apply Pod.)
 
-**Why:** RBAC is “who (ServiceAccount) → what (verbs) → which resource (pods) → in which namespace”.
+**Why this works**
 
----
+- RBAC is namespace-scoped for Role/RoleBinding.
+- SA must match the subject in RoleBinding and be set on the Pod.
 
-## 🔥 QUESTION 13 — Readiness Probe
+**Docs**
 
-In namespace `default`, Deployment `accounts-api` exists with container `accounts` on port `8080`.
-
-**Task:** Add a readiness probe:
-
-- HTTP GET on `/ready`
-- Port `8080`
-- `initialDelaySeconds: 5`
+- RBAC: [https://kubernetes.io/docs/reference/access-authn-authz/rbac/](https://kubernetes.io/docs/reference/access-authn-authz/rbac/)
 
 ---
 
-### ✅ Answer 13 — Readiness probe on Deployment
+## Question 15 – Capture Pod logs to file on node
 
-Edit the Deployment:
+In namespace `default`, Pod `winter` exists.
+
+On the node, capture its current logs and write them to file:
+
+- `/opt/winter/logs.txt`
+
+You may run commands from the control plane node using `kubectl`.
+
+### Solution
+
+On the node:
 
 ```bash
-kubectl edit deploy accounts-api -n default
+mkdir -p /opt/winter
+kubectl logs winter > /opt/winter/logs.txt
 ```
 
-Under the `accounts` container:
+**Why this works**
 
-```yaml
-readinessProbe:
-  httpGet:
-    path: /ready
-    port: 8080
-  initialDelaySeconds: 5
-  periodSeconds: 10
-```
+- `kubectl logs` outputs container logs.
+- Redirecting to a file on the node satisfies the requirement.
 
-**Why:** Readiness probes determine when the pod is ready to receive traffic from a Service. Always under `containers:`.
+**Docs**
+
+- Viewing logs: [https://kubernetes.io/docs/tasks/debug/debug-application/debug-running-pod/](https://kubernetes.io/docs/tasks/debug/debug-application/debug-running-pod/)
 
 ---
 
-## 🔥 QUESTION 14 — Liveness Probe
+## Question 16 – Find highest CPU Pod and write name to file
 
-In namespace `default`, Pod `livecheck` exists with a single `nginx` container exposing port `80`.
+In namespace `cpu-load`, Pods `cpu-busy-1` and `cpu-busy-2` run a CPU-intensive workload.
 
-**Task:** Add a liveness probe:
+Using `kubectl top`, determine which Pod currently uses the most CPU and write its **name only** (no extra spaces/newlines) into the file:
 
-- HTTP GET on `/health`
-- Port `80`
-- `initialDelaySeconds: 5`
+- `/opt/winter/highest.txt`
 
----
+### Solution
 
-### ✅ Answer 14 — Liveness probe
-
-Edit the Pod:
+First, get metrics:
 
 ```bash
-kubectl edit pod livecheck -n default
+kubectl top pod -n cpu-load
 ```
 
-Add under the container:
+Suppose output shows `cpu-busy-2` has higher CPU.
 
-```yaml
-livenessProbe:
-  httpGet:
-    path: /health
-    port: 80
-  initialDelaySeconds: 5
-  periodSeconds: 10
-```
-
-**Why:** Liveness probes tell Kube when to restart a container that is stuck/unhealthy.
-
----
-
-## 🔥 QUESTION 15 — Undo Deployment Rollout
-
-In namespace `default`, the script:
-
-- Created `payments` Deployment with `image: nginx:1.25`.
-- Then updated it to `image: nginx:bad-tag` to create a bad revision.
-
-**Task:**
-
-1. Undo the last rollout for Deployment `payments`.
-2. Verify that the rollout is successful.
-
----
-
-### ✅ Answer 15 — Undo Deployment rollout
+Then:
 
 ```bash
-kubectl rollout undo deploy/payments -n default
-kubectl rollout status deploy/payments -n default
+echo -n "cpu-busy-2" > /opt/winter/highest.txt
 ```
 
-**Why:** `rollout undo` reverts to the previous ReplicaSet revision. `rollout status` ensures the rollback finished successfully.
+(Use whichever Pod name actually has the highest CPU when you run `kubectl top`.)
+
+**Why this works**
+
+- `kubectl top` uses metrics-server and shows live resource usage.
+- The task checks that the name in the file matches a real Pod in `cpu-load`.
+
+**Docs**
+
+- Metrics / `kubectl top`: [https://kubernetes.io/docs/tasks/debug/debug-cluster/resource-metrics-pipeline/](https://kubernetes.io/docs/tasks/debug/debug-cluster/resource-metrics-pipeline/)
 
 ---
 
-## 🔥 QUESTION 16 — Deprecation Fix
+## Question 17 – Expose Deployment via NodePort Service
 
-The script created `/root/old.yaml` with:
+In namespace `default`, Deployment `video-api` exists with Pods labeled `app=video-api` and container port `9090`.
 
-```yaml
-apiVersion: apps/v1beta1
-kind: Deployment
+Create a Service `video-svc` that:
+
+- Type: `NodePort`
+- Selects `app=video-api`
+- Exposes Service port `80` mapping to target port `9090`
+
+### Solution
+
+```bash
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Service
 metadata:
-  name: old-deploy
+  name: video-svc
+  namespace: default
 spec:
-  strategy:
-    rollingUpdate:
-      maxSurge: "invalid"
-  template:
-    metadata:
-      labels:
-        app: old
-    spec:
-      containers:
-        - name: old
-          image: nginx
-```
-
-**Task:**
-
-- Update this file to a **valid** `Deployment` manifest for Kubernetes `1.29`.
-- Use `apps/v1`.
-- Fix the invalid `strategy` fields.
-- Apply it.
-
----
-
-### ✅ Answer 16 — Deprecation fix
-
-Edit the file:
-
-```bash
-vi /root/old.yaml
-```
-
-Make it something like:
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: old-deploy
-spec:
-  replicas: 1
+  type: NodePort
   selector:
-    matchLabels:
-      app: old
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
-  template:
-    metadata:
-      labels:
-        app: old
-    spec:
-      containers:
-        - name: old
-          image: nginx
+    app: video-api
+  ports:
+    - port: 80
+      targetPort: 9090
+EOF
 ```
 
-Apply:
+**Why this works**
 
-```bash
-kubectl apply -f /root/old.yaml
-```
+- `NodePort` exposes the Service externally on all nodes.
+- Port translation 80 → 9090 matches the requirement.
 
-**Why:**
+**Docs**
 
-- `apps/v1beta1` is removed in modern clusters; must use `apps/v1`.
-- `spec.selector` is mandatory and must match Pod labels.
-- `maxSurge` cannot be `"invalid"`; must be an integer or valid percentage string.
+- Service types: [https://kubernetes.io/docs/concepts/services-networking/service/#publishing-services-service-types](https://kubernetes.io/docs/concepts/services-networking/service/#publishing-services-service-types)
 
 ---
 
-## 🔥 QUESTION 17 — Correct VolumeMount Path Issue
+## Question 18 – Fix Ingress pathType from invalid manifest
 
-In namespace `default`, the script created a Pod `broken-init`:
+On the node, file `/root/client-ingress.yaml` contains an Ingress manifest that fails to apply because it uses an invalid `pathType` value.
 
-```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: broken-init
-  namespace: default
-spec:
-  containers:
-    - name: app
-      image: busybox
-      command: ["/app/start.sh"]
-```
+Your task:
 
-The pod fails because `/app/start.sh` doesn’t exist.
+1. Apply `/root/client-ingress.yaml` and observe the error.
+2. Fix the `pathType` in the manifest to use a valid value.
+3. Ensure the Ingress `client-ingress` is created in namespace `default`, routing:
 
-**Task:** Fix this by:
+   - Path `/`
+   - To Service `client-svc`
+   - On port `80`
 
-- Using an `emptyDir` volume.
-- Mounting it at `/app` for both an initContainer and the main container.
-- Having the initContainer create `/app/start.sh` with content `echo start app` and make it executable.
+### Solution
 
----
-
-### ✅ Answer 17 — Fix initContainer + volume mount
-
-Because Pod spec changes are not fully patchable, easiest is to delete & recreate:
+**Step 1 – Try applying**
 
 ```bash
-kubectl delete pod broken-init -n default --ignore-not-found
+kubectl apply -f /root/client-ingress.yaml
+# Observe error about Unsupported value "InvalidType"
 ```
 
-Create `broken-init-fixed.yaml`:
-
-```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: broken-init
-  namespace: default
-spec:
-  volumes:
-    - name: app-scripts
-      emptyDir: {}
-  initContainers:
-    - name: init-script
-      image: busybox
-      command:
-        - sh
-        - -c
-        - "echo 'echo start app' > /app/start.sh && chmod +x /app/start.sh"
-      volumeMounts:
-        - name: app-scripts
-          mountPath: /app
-  containers:
-    - name: app
-      image: busybox
-      command: ["/app/start.sh"]
-      volumeMounts:
-        - name: app-scripts
-          mountPath: /app
-```
-
-Apply:
+**Step 2 – Edit manifest**
 
 ```bash
-kubectl apply -f broken-init-fixed.yaml
-```
-
-**Why:** `emptyDir` volumes are shared between init containers and main containers. Init writes the script, main executes it.
-
----
-
-## 🔥 QUESTION 18 — Use Correct NetworkPolicy on Pod
-
-In namespace `netpol-lab`:
-
-- Pod `auth` has wrong labels: `role: wrong-auth`, `env: dev`.
-- Pod `db` has labels: `role: db`, `env: prod`.
-- There are two NetworkPolicies:
-
-  - `allow-auth-ingress`
-  - `allow-db-egress`
-
-They both expect `auth` Pods to have labels:
-
-```yaml
-role: auth
-env: prod
-```
-
-**Task:** Update `auth` Pod labels so that it:
-
-- Matches `allow-auth-ingress` `podSelector`
-- Matches `allow-db-egress` `podSelector`
-
-Do **not** modify the policies.
-
----
-
-### ✅ Answer 18 — Use correct NetworkPolicies on Pod
-
-Inspect policies:
-
-```bash
-kubectl describe netpol allow-auth-ingress -n netpol-lab
-kubectl describe netpol allow-db-egress -n netpol-lab
-```
-
-You’ll see:
-
-```yaml
-podSelector:
-  matchLabels:
-    role: auth
-    env: prod
-```
-
-Relabel `auth`:
-
-```bash
-kubectl label pod auth role=auth env=prod -n netpol-lab --overwrite
-```
-
-**Why:** NetworkPolicies match by Pod labels; making `auth` match the `podSelector` means these policies now apply to it.
-
----
-
-## 🔥 QUESTION 19 — Fix Misconfigured Ingress PathType
-
-In namespace `default`, the script created:
-
-- Service `path-test-svc`
-- Deployment `path-test-deploy`
-- Ingress `bad-path-ingress` with:
-
-```yaml
-pathType: Exacttt
-```
-
-**Task:** Fix `bad-path-ingress` to use a valid `pathType`, such as `Prefix`.
-
----
-
-### ✅ Answer 19 — Fix Ingress pathType
-
-Edit the Ingress:
-
-```bash
-kubectl edit ingress bad-path-ingress -n default
+vi /root/client-ingress.yaml
 ```
 
 Change:
 
 ```yaml
-pathType: Exacttt
+pathType: InvalidType
 ```
 
 to:
@@ -993,63 +955,350 @@ to:
 pathType: Prefix
 ```
 
-(or `Exact` if the question specifies exact matching.)
+(or `Exact` / `ImplementationSpecific`, but we’ll use `Prefix`.)
 
-**Why:** Valid `pathType` values are `Exact`, `Prefix`, `ImplementationSpecific`. Any other string breaks the Ingress object.
+Ensure backend:
+
+```yaml
+backend:
+  service:
+    name: client-svc
+    port:
+      number: 80
+```
+
+**Step 3 – Apply again**
+
+```bash
+kubectl apply -f /root/client-ingress.yaml
+```
+
+**Why this works**
+
+- Ingress v1 supports only `Exact`, `Prefix`, `ImplementationSpecific`.
+- Once valid, the resource is accepted and routes traffic.
+
+**Docs**
+
+- Ingress pathType: [https://kubernetes.io/docs/concepts/services-networking/ingress/#path-types](https://kubernetes.io/docs/concepts/services-networking/ingress/#path-types)
 
 ---
 
-## 🔥 QUESTION 20 — Pause + Resume Deployment
+## Question 19 – Add Pod-level securityContext and capability
 
-In namespace `default`, Deployment `backend` exists with container `backend` and image `nginx:1.25`.
+In namespace `default`, Deployment `syncer` exists with:
 
-**Task:**
+- No `securityContext` set.
 
-1. Pause the rollout of Deployment `backend`.
-2. Update its image to `backend:v2` (use `nginx:1.27` to simulate in this lab, for example).
-3. Resume the rollout.
-4. Verify the rollout status.
+Update Deployment `syncer` so that:
+
+- At Pod level, `runAsUser: 1000`.
+- At container level (`sync` container), add capability `NET_ADMIN`.
+
+### Solution
+
+```bash
+kubectl edit deploy syncer
+```
+
+Add under `spec.template.spec`:
+
+```yaml
+securityContext:
+  runAsUser: 1000
+```
+
+And under the container:
+
+```yaml
+securityContext:
+  capabilities:
+    add:
+      - NET_ADMIN
+```
+
+Full container snippet:
+
+```yaml
+containers:
+  - name: sync
+    image: nginx
+    securityContext:
+      capabilities:
+        add:
+          - NET_ADMIN
+```
+
+Save, then verify rollout:
+
+```bash
+kubectl rollout status deploy syncer
+```
+
+**Why this works**
+
+- Pod-level `runAsUser` enforces UID.
+- Container `capabilities.add` augments Linux capabilities, including `NET_ADMIN`.
+
+**Docs**
+
+- Pod securityContext: [https://kubernetes.io/docs/tasks/configure-pod-container/security-context/](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/)
 
 ---
 
-### ✅ Answer 20 — Pause, update, resume Deployment
+## Question 20 – Create Redis Pod in specific namespace
 
-Pause:
+In namespace `cachelayer`, create a Pod named `redis32` that:
 
-```bash
-kubectl rollout pause deploy/backend -n default
-```
+- Uses image `redis:3.2`
+- Exposes container port `6379`
 
-Update image (use a real tag; we’ll say `nginx:1.27`):
-
-```bash
-kubectl set image deploy/backend \
-  backend=nginx:1.27 \
-  -n default
-```
-
-Resume:
+### Solution
 
 ```bash
-kubectl rollout resume deploy/backend -n default
+kubectl apply -n cachelayer -f - <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: redis32
+spec:
+  containers:
+    - name: redis
+      image: redis:3.2
+      ports:
+        - containerPort: 6379
+EOF
 ```
 
-Verify:
+**Why this works**
 
-```bash
-kubectl rollout status deploy/backend -n default
-```
+- Matches name, image, and port exactly.
+- Namespace `cachelayer` was created by `prep.sh`.
 
-**Why:** This is the standard controlled rollout flow: pause → change → resume → watch status.
+**Docs**
+
+- Pods basics: [https://kubernetes.io/docs/concepts/workloads/pods/](https://kubernetes.io/docs/concepts/workloads/pods/)
 
 ---
 
+## Question 21 – Fix labels to match existing NetworkPolicies
+
+In namespace `netpol-chain`:
+
+- Pods `frontend`, `backend`, and `database` exist with incorrect labels:
+
+  - `role=wrong-frontend`, `role=wrong-backend`, `role=wrong-db`
+
+- NetworkPolicies exist:
+
+  - `deny-all`
+  - `allow-frontend-to-backend` (selects `role=backend` and allows from `role=frontend`)
+  - `allow-backend-to-db` (selects `role=db` and allows from `role=backend`)
+
+Without modifying any NetworkPolicy objects, update the labels on Pods `frontend`, `backend`, and `database` so that traffic is allowed in the chain:
+
+`frontend` → `backend` → `database`.
+
+### Solution
+
+Patch labels:
+
+```bash
+kubectl label pod frontend -n netpol-chain role=frontend --overwrite
+kubectl label pod backend  -n netpol-chain role=backend  --overwrite
+kubectl label pod database -n netpol-chain role=db       --overwrite
 ```
 
-You can now:
+**Why this works**
 
-- Run the shell script in KillerKoda to prep the environment.
-- Use this markdown as your **exam-style workbook**.
-- Practice each question using the exact resource names and namespaces that already exist in the cluster.
-::contentReference[oaicite:0]{index=0}
+- NetworkPolicies already reference `role=frontend`, `role=backend`, `role=db`.
+- Aligning Pod labels with selectors activates the desired flows.
+
+**Docs**
+
+- NetworkPolicy: [https://kubernetes.io/docs/concepts/services-networking/network-policies/](https://kubernetes.io/docs/concepts/services-networking/network-policies/)
+
+---
+
+## Question 22 – Resume paused rollout and update image
+
+In namespace `default`, Deployment `dashboard` exists and its rollout has been paused. It currently uses image `nginx:1.23`.
+
+Perform:
+
+1. Resume the rollout.
+2. Update the container image to `nginx:1.25`.
+3. Verify the rollout completes successfully and the new image is in use.
+
+### Solution
+
+**Step 1 – Resume**
+
+```bash
+kubectl rollout resume deploy dashboard
 ```
+
+**Step 2 – Update image**
+
+```bash
+kubectl set image deploy/dashboard web=nginx:1.25
+```
+
+**Step 3 – Verify**
+
+```bash
+kubectl rollout status deploy dashboard
+kubectl get deploy dashboard -o jsonpath='{.spec.template.spec.containers[0].image}'
+# should output: nginx:1.25
+```
+
+**Why this works**
+
+- Paused Deployment won’t roll new replicas until resumed.
+- `kubectl set image` is the fastest way to change container image.
+
+**Docs**
+
+- Rolling updates: [https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#updating-a-deployment](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#updating-a-deployment)
+
+---
+
+## Question 23 – Configure ExternalName Service
+
+In namespace `default`, create a Service named `external-db` that:
+
+- Type: `ExternalName`
+- Resolves to `database.prod.internal`
+
+No selector or ports are required.
+
+### Solution
+
+```bash
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: external-db
+  namespace: default
+spec:
+  type: ExternalName
+  externalName: database.prod.internal
+EOF
+```
+
+**Why this works**
+
+- `ExternalName` Services simply create a DNS alias inside the cluster.
+- No selector/endpoints are used.
+
+**Docs**
+
+- ExternalName: [https://kubernetes.io/docs/concepts/services-networking/service/#externalname](https://kubernetes.io/docs/concepts/services-networking/service/#externalname)
+
+---
+
+## Question 24 – Fix CronJob restart policy and backoffLimit
+
+In namespace `default`, CronJob `hourly-report` exists with:
+
+- Schedule: `0 * * * *`
+- Container: `busybox` printing `hourly report`
+- Template incorrectly configured with `restartPolicy: OnFailure` and an undesired `backoffLimit`.
+
+Update CronJob `hourly-report` so that:
+
+- Pods created by the Job never restart (`restartPolicy: Never`).
+- The Job’s `backoffLimit` is set to `2`.
+
+### Solution
+
+```bash
+kubectl edit cronjob hourly-report
+```
+
+Under `spec.jobTemplate.spec` ensure:
+
+```yaml
+backoffLimit: 2
+template:
+  spec:
+    restartPolicy: Never
+    containers:
+      - name: report
+        image: busybox
+        # ...
+```
+
+Save and exit.
+
+**Why this works**
+
+- `backoffLimit` controls how many times a failed Job will retry.
+- `restartPolicy: Never` means failed Pods won’t be restarted by the kubelet.
+
+**Docs**
+
+- CronJob / Job fields: [https://kubernetes.io/docs/concepts/workloads/controllers/job/](https://kubernetes.io/docs/concepts/workloads/controllers/job/)
+
+---
+
+## Question 25 – Fix Deployment selector/labels mismatch
+
+On the node, file `/root/broken-app.yaml` contains a Deployment manifest for `broken-app` with a mismatch between:
+
+- `.spec.selector.matchLabels`
+- `.spec.template.metadata.labels`
+
+Fix the manifest so that:
+
+- The selector and template labels use the same `app` label.
+- Deployment `broken-app` is successfully created.
+- At least one Pod is running for this Deployment.
+
+### Solution
+
+Edit the file:
+
+```bash
+vi /root/broken-app.yaml
+```
+
+Correct it to something like:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: broken-app
+  namespace: default
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: fixed-app
+  template:
+    metadata:
+      labels:
+        app: fixed-app
+    spec:
+      containers:
+        - name: web
+          image: nginx
+```
+
+Apply:
+
+```bash
+kubectl apply -f /root/broken-app.yaml
+kubectl rollout status deploy broken-app
+```
+
+**Why this works**
+
+- In `apps/v1`, the selector is immutable and must match template labels.
+- Once they match, the Deployment manages the Pods correctly and becomes `Available`.
+
+**Docs**
+
+- Deployment selectors: [https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#selector](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#selector)
