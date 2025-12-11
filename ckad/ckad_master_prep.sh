@@ -1,7 +1,23 @@
 #!/bin/bash
 set -euo pipefail
 
+# If anything fails, print the line number so it's easier to debug
+trap 'echo "[ERROR] prep.sh failed at line $LINENO. Scroll up to see the last kubectl error."' ERR
+
 echo "=== CKAD Master Practice Environment Setup ==="
+
+# Small helper for final sanity checks
+check() {
+  local kind="$1"
+  local name="$2"
+  local ns="$3"
+
+  if kubectl get "$kind" "$name" -n "$ns" >/dev/null 2>&1; then
+    echo "[OK]  $kind/$name in namespace $ns"
+  else
+    echo "[MISSING]  $kind/$name in namespace $ns  (something above may have failed)"
+  fi
+}
 
 # ---------------------------------------------------------
 # Namespaces
@@ -566,9 +582,9 @@ spec:
 EOF
 
 # ---------------------------------------------------------
-# Q19: Ingress with invalid pathType
+# Q19: Ingress with invalid pathType (logically wrong for the question, but valid for the API)
 # ---------------------------------------------------------
-echo "[*] Setting up Q19: Ingress with invalid pathType..."
+echo "[*] Setting up Q19: Ingress with \"wrong\" pathType to fix..."
 # Backend svc
 cat <<'EOF' | kubectl apply -f -
 apiVersion: v1
@@ -605,7 +621,7 @@ spec:
             - containerPort: 80
 EOF
 
-# Bad ingress
+# "Bad" ingress: pathType is valid but not what the checker expects (you'll fix it in the question)
 cat <<'EOF' | kubectl apply -f -
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -617,7 +633,7 @@ spec:
     - http:
         paths:
           - path: /
-            pathType: Exacttt   # invalid; to be fixed
+            pathType: ImplementationSpecific   # to be fixed to Prefix/Exact in the exercise
             backend:
               service:
                 name: path-test-svc
@@ -649,5 +665,29 @@ spec:
         - name: backend
           image: nginx:1.25
 EOF
+
+echo "=== Base environment created. Running quick sanity checks... ==="
+
+# Key checks so you don't get 'NotFound' surprises
+check deployment db-api        prod
+check deployment web-deploy-main default
+check service    web-svc       default
+check ingress    web-bad-ingress default
+check service    api-svc       default
+check deployment api-deployment default
+check pod        frontend      netpol-lab
+check netpol     allow-frontend-to-backend netpol-lab
+check deployment app-stable    default
+check service    app-service   default
+check deployment web-app       default
+check service    web-app-svc   default
+check deployment web-deploy    default
+check pod        audit-pod     rbac-lab
+check deployment accounts-api  default
+check pod        livecheck     default
+check deployment payments      default
+check pod        broken-init   default
+check ingress    bad-path-ingress default
+check deployment backend       default
 
 echo "=== Environment ready. Use your CKAD practice questions file and start solving! ==="
