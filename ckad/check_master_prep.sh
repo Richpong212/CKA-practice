@@ -8,6 +8,7 @@ set -euo pipefail
 
 PASSED=0
 TOTAL=25
+BASE_DIR="${HOME}"
 
 green()  { printf "\e[32m%s\e[0m\n" "$1"; }
 red()    { printf "\e[31m%s\e[0m\n" "$1"; }
@@ -156,22 +157,32 @@ check_q5() {
   fi
 }
 
-# ---------------- Q6: Docker image api-app:2.1 built & /root/api-app.tar ----------------
+# ---------------- Q6: Docker image api-app:2.1 built & api-app.tar ----------------
 check_q6() {
   local ok=1
+  local tar_path=""
 
-  [[ ! -f /root/api-app.tar ]] && ok=0
+  # Prefer $HOME/api-app.tar, but also accept /root/api-app.tar for root-based labs
+  if [[ -f "${HOME}/api-app.tar" ]]; then
+    tar_path="${HOME}/api-app.tar"
+  elif [[ -f "/root/api-app.tar" ]]; then
+    tar_path="/root/api-app.tar"
+  else
+    ok=0
+  fi
 
+  # Check image exists locally (if docker available)
   if command -v docker >/dev/null 2>&1; then
     docker image inspect api-app:2.1 >/dev/null 2>&1 || ok=0
   fi
 
   if [[ $ok -eq 1 ]]; then
-    pass 6 "api-app:2.1 image built and /root/api-app.tar exists"
+    pass 6 "api-app:2.1 image built and $(basename "$tar_path") exists at $(dirname "$tar_path")"
   else
-    fail 6 "api-app:2.1 image and/or /root/api-app.tar missing"
+    fail 6 "api-app:2.1 image and/or api-app.tar missing (checked \$HOME and /root)"
   fi
 }
+
 
 # ---------------- Q7: resource-pod + dev-quota ----------------
 check_q7() {
@@ -206,7 +217,7 @@ check_q7() {
   fi
 }
 
-# ---------------- Q8: old-deploy fixed from /root/old.yaml ----------------
+# ---------------- Q8: old-deploy fixed from $HOME/old.yaml ----------------
 check_q8() {
   local ok=1
 

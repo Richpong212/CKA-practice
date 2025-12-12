@@ -5,13 +5,18 @@
 
 set -euo pipefail
 
+BASE_DIR="${HOME}"
+
 echo "=== Cleaning CKAD practice environment ==="
+echo "Using BASE_DIR: ${BASE_DIR}"
+echo
 
 # ------------ Namespaces (wipes everything inside them) ------------
 for ns in meta dev cachelayer netpol-chain cpu-load production; do
   echo "Deleting namespace: $ns"
   kubectl delete ns "$ns" --ignore-not-found=true
 done
+echo
 
 # ------------ Default namespace: Deployments ------------
 echo "Deleting Deployments in default namespace..."
@@ -28,7 +33,7 @@ kubectl delete deploy \
   dashboard \
   old-deploy \
   broken-app \
-  --ignore-not-found=true
+  --ignore-not-found=true || true
 
 # Extra ones from older labs (safe to attempt)
 kubectl delete deploy \
@@ -38,6 +43,7 @@ kubectl delete deploy \
   web-deploy \
   db-api \
   --ignore-not-found=true || true
+echo
 
 # ------------ Default namespace: Pods (standalone) ------------
 echo "Deleting standalone Pods in default namespace..."
@@ -46,13 +52,14 @@ kubectl delete pod \
   healthz \
   audit-runner \
   winter \
-  cpu-busy-1 \
-  cpu-busy-2 \
   redis32 \
   resource-pod \
   livecheck \
   broken-init \
-  --ignore-not-found=true
+  --ignore-not-found=true || true
+echo
+
+# (cpu-busy pods live in cpu-load ns and will be removed with the namespace)
 
 # ------------ Default namespace: Services ------------
 echo "Deleting Services in default namespace..."
@@ -65,7 +72,8 @@ kubectl delete svc \
   client-svc \
   external-db \
   path-test-svc \
-  --ignore-not-found=true
+  --ignore-not-found=true || true
+echo
 
 # ------------ Default namespace: Ingresses ------------
 echo "Deleting Ingresses in default namespace..."
@@ -76,7 +84,8 @@ kubectl delete ingress \
   web-bad-ingress \
   bad-path-ingress \
   api-ing \
-  --ignore-not-found=true
+  --ignore-not-found=true || true
+echo
 
 # ------------ Default namespace: CronJobs ------------
 echo "Deleting CronJobs in default namespace..."
@@ -85,19 +94,22 @@ kubectl delete cronjob \
   hourly-report \
   backup-cron \
   workers-batch \
-  --ignore-not-found=true
+  --ignore-not-found=true || true
+echo
 
 # ------------ RBAC in default namespace ------------
 echo "Deleting RBAC objects in default namespace..."
-kubectl delete role audit-role       -n default --ignore-not-found=true
-kubectl delete rolebinding audit-rb  -n default --ignore-not-found=true
-kubectl delete sa audit-sa wrong-sa  -n default --ignore-not-found=true
+kubectl delete role audit-role       -n default --ignore-not-found=true || true
+kubectl delete rolebinding audit-rb  -n default --ignore-not-found=true || true
+kubectl delete sa audit-sa wrong-sa  -n default --ignore-not-found=true || true
+echo
 
 # ------------ RBAC in meta namespace (if still around) ------------
 echo "Deleting RBAC objects in meta namespace (if ns still exists)..."
 kubectl delete role        dev-deploy-role -n meta --ignore-not-found=true || true
 kubectl delete rolebinding dev-deploy-rb   -n meta --ignore-not-found=true || true
 kubectl delete sa          dev-sa          -n meta --ignore-not-found=true || true
+echo
 
 # ------------ NetworkPolicies in netpol-chain ------------
 echo "Deleting NetworkPolicies in netpol-chain (if ns still exists)..."
@@ -107,20 +119,25 @@ kubectl delete networkpolicy \
   allow-backend-to-db \
   -n netpol-chain \
   --ignore-not-found=true || true
+echo
 
 # ------------ Local files on node ------------
-echo "Removing local practice files..."
-rm -f /root/api-app.tar \
-      /root/old.yaml \
-      /root/client-ingress.yaml \
-      /root/broken-app.yaml
+echo "Removing local practice files under ${BASE_DIR}..."
+rm -f "${BASE_DIR}/api-app.tar" \
+      "${BASE_DIR}/old.yaml" \
+      "${BASE_DIR}/client-ingress.yaml" \
+      "${BASE_DIR}/broken-app.yaml" || true
 
-rm -f /opt/winter/logs.txt \
-      /opt/winter/highest.txt || true
+# Docker build context dir (optional)
+rm -rf "${BASE_DIR}/api-app" || true
 
-# Optionally remove the whole winter dir
-if [ -d /opt/winter ]; then
-  rmdir /opt/winter 2>/dev/null || true
-fi
+echo "Cleaning /opt/winter files (ignore if permission denied)..."
+# Logs written during exercises
+sudo rm -f /opt/winter/logs.txt 2>/dev/null || true
+sudo rm -f /opt/winter/highest.txt 2>/dev/null || true
 
+# Optionally remove the whole winter dir (will fail silently if not empty or no perms)
+sudo rmdir /opt/winter 2>/dev/null || true
+
+echo
 echo "=== CKAD practice cleanup complete ==="

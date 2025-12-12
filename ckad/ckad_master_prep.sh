@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
+# CKAD 2025 Practice – Environment Prep
+# This script is safe to run as *any* user – it uses $HOME instead of /root.
+
 set -euo pipefail
 
+BASE_DIR="${HOME}"
+
 echo "=== CKAD practice environment prep ==="
+echo "Using BASE_DIR: ${BASE_DIR}"
+echo
 
-# -------------------------
-# Namespaces
-# -------------------------
+# ---------------- Namespaces ----------------
 for ns in meta dev cachelayer netpol-chain cpu-load production; do
-  if ! kubectl get ns "$ns" >/dev/null 2>&1; then
-    echo "Creating namespace: $ns"
-    kubectl create ns "$ns"
-  else
-    echo "Namespace $ns already exists"
-  fi
+  echo "Creating namespace: $ns"
+  kubectl get ns "$ns" >/dev/null 2>&1 || kubectl create ns "$ns"
 done
+echo
 
-# -------------------------
-# Q1 – billing-api Deployment with hardcoded env vars
-# -------------------------
+# ---------------- Q1: billing-api with hardcoded env vars ----------------
 echo "Creating Deployment billing-api (hardcoded env vars)..."
-kubectl apply -f - <<'EOF'
+kubectl apply -f - <<EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -36,7 +36,7 @@ spec:
         app: billing-api
     spec:
       containers:
-        - name: billing
+        - name: api
           image: nginx
           env:
             - name: DB_USER
@@ -44,12 +44,11 @@ spec:
             - name: DB_PASS
               value: "SuperSecret123"
 EOF
+echo
 
-# -------------------------
-# Q2 – Broken Ingress store-ingress + service / deployment
-# -------------------------
+# ---------------- Q2: store-deploy + svc + misconfigured ingress ----------------
 echo "Creating store deployment, service and broken ingress..."
-kubectl apply -f - <<'EOF'
+kubectl apply -f - <<EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -66,7 +65,7 @@ spec:
         app: store
     spec:
       containers:
-        - name: store
+        - name: web
           image: nginx
           ports:
             - containerPort: 8080
@@ -83,7 +82,6 @@ spec:
     - port: 8080
       targetPort: 8080
 ---
-# Broken ingress: wrong service name, wrong port, invalid/legacy pathType
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -93,20 +91,19 @@ spec:
   rules:
     - http:
         paths:
-          - path: /shop
-            pathType: Exact   # not what we want for the question
+          - path: /wrong
+            pathType: ImplementationSpecific
             backend:
               service:
-                name: wrong-svc   # wrong on purpose
+                name: wrong-svc
                 port:
-                  number: 80      # wrong on purpose
+                  number: 80
 EOF
+echo
 
-# -------------------------
-# Q3 – internal-api deployment + service (no ingress yet)
-# -------------------------
+# ---------------- Q3: internal-api deploy + svc ----------------
 echo "Creating internal-api deployment and service..."
-kubectl apply -f - <<'EOF'
+kubectl apply -f - <<EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -140,12 +137,11 @@ spec:
     - port: 3000
       targetPort: 3000
 EOF
+echo
 
-# -------------------------
-# Q4 – RBAC problem on dev-deployment in namespace meta
-# -------------------------
+# ---------------- Q4: dev-deployment (RBAC issue in meta) ----------------
 echo "Creating dev-deployment in namespace meta (RBAC issue)..."
-kubectl apply -f - <<'EOF'
+kubectl apply -f - <<EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -161,25 +157,23 @@ spec:
       labels:
         app: dev-deployment
     spec:
-      serviceAccountName: default   # no special permissions
       containers:
-        - name: api-client
+        - name: runner
           image: bitnami/kubectl:latest
           command: ["/bin/sh","-c"]
           args:
             - |
               while true; do
-                echo "Trying to list deployments in meta..."
-                kubectl get deployments.apps -n meta || true
-                sleep 30
+                echo "Trying to list deployments..."
+                kubectl get deployments -n meta || echo "Forbidden?"
+                sleep 10
               done
 EOF
+echo
 
-# -------------------------
-# Q5 – startup-pod missing script (no init container yet)
-# -------------------------
+# ---------------- Q5: broken startup-pod ----------------
 echo "Creating broken startup-pod (missing /app/start.sh)..."
-kubectl apply -f - <<'EOF'
+kubectl apply -f - <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
@@ -192,28 +186,26 @@ spec:
       command: ["/bin/sh","-c"]
       args: ["/app/start.sh"]
 EOF
+echo
 
-# -------------------------
-# Q6 – Dockerfile at /root/api-app
-# -------------------------
-echo "Preparing /root/api-app with sample Dockerfile..."
-mkdir -p /root/api-app
-cat >/root/api-app/Dockerfile <<'EOF'
-FROM nginx:latest
-RUN echo "CKAD practice image" > /usr/share/nginx/html/index.html
+# ---------------- Q6: Prepare Dockerfile under $HOME/api-app ----------------
+echo "Preparing ${BASE_DIR}/api-app with sample Dockerfile..."
+mkdir -p "${BASE_DIR}/api-app"
+cat > "${BASE_DIR}/api-app/Dockerfile" <<'EOF'
+FROM nginx:alpine
+RUN echo "Hello from CKAD practice image" > /usr/share/nginx/html/index.html
 EOF
+echo "Dockerfile written to ${BASE_DIR}/api-app/Dockerfile"
+echo
 
-# -------------------------
-# Q7 – Namespace dev only (you will add pod + quota)
-# -------------------------
-echo "Namespace dev ready for resource Quota and Pod question."
+# ---------------- Q7: Namespace dev placeholder (no resources yet) ----------------
+echo "Namespace dev ready for ResourceQuota and Pod question."
+echo
 
-# -------------------------
-# Q8 – /root/old.yaml with deprecated Deployment config
-# -------------------------
-echo "Writing deprecated deployment manifest to /root/old.yaml..."
-cat >/root/old.yaml <<'EOF'
-apiVersion: apps/v1beta1
+# ---------------- Q8: Deprecated deployment manifest at $HOME/old.yaml ----------------
+echo "Writing deprecated deployment manifest to ${BASE_DIR}/old.yaml..."
+cat > "${BASE_DIR}/old.yaml" <<'EOF'
+apiVersion: extensions/v1beta1
 kind: Deployment
 metadata:
   name: old-deploy
@@ -231,15 +223,14 @@ spec:
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxSurge: 200%        # intentionally invalid
-      maxUnavailable: -1    # intentionally invalid
+      maxSurge: "invalid"
+      maxUnavailable: "invalid"
 EOF
+echo
 
-# -------------------------
-# Q9 – app-stable deployment + app-svc service
-# -------------------------
+# ---------------- Q9: app-stable + app-svc ----------------
 echo "Creating app-stable deployment and app-svc..."
-kubectl apply -f - <<'EOF'
+kubectl apply -f - <<EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -273,12 +264,11 @@ spec:
     - port: 80
       targetPort: 80
 EOF
+echo
 
-# -------------------------
-# Q10 – web-app deployment + misconfigured web-app-svc
-# -------------------------
+# ---------------- Q10: web-app + broken web-app-svc ----------------
 echo "Creating web-app and broken web-app-svc..."
-kubectl apply -f - <<'EOF'
+kubectl apply -f - <<EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -297,8 +287,6 @@ spec:
       containers:
         - name: web
           image: nginx
-          ports:
-            - containerPort: 80
 ---
 apiVersion: v1
 kind: Service
@@ -307,17 +295,16 @@ metadata:
   namespace: default
 spec:
   selector:
-    app: wronglabel   # intentionally wrong
+    app: wronglabel
   ports:
     - port: 80
       targetPort: 80
 EOF
+echo
 
-# -------------------------
-# Q11 – healthz pod without liveness probe
-# -------------------------
+# ---------------- Q11: healthz Pod (no liveness yet) ----------------
 echo "Creating healthz pod (no liveness probe yet)..."
-kubectl apply -f - <<'EOF'
+kubectl apply -f - <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
@@ -330,19 +317,18 @@ spec:
       ports:
         - containerPort: 80
 EOF
+echo
 
-# -------------------------
-# Q12 – shop-api deployment
-# -------------------------
+# ---------------- Q12: shop-api Deployment ----------------
 echo "Creating shop-api deployment..."
-kubectl apply -f - <<'EOF'
+kubectl apply -f - <<EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: shop-api
   namespace: default
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: shop-api
@@ -357,18 +343,12 @@ spec:
           ports:
             - containerPort: 8080
 EOF
+echo
 
-# -------------------------
-# Q14 – audit-runner pod with wrong service account
-# -------------------------
+# ---------------- Q14: audit-runner + wrong-sa (RBAC) ----------------
 echo "Creating audit-runner with wrong-sa..."
-kubectl apply -f - <<'EOF'
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: wrong-sa
-  namespace: default
----
+kubectl get sa wrong-sa -n default >/dev/null 2>&1 || kubectl create sa wrong-sa -n default
+kubectl apply -f - <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
@@ -383,17 +363,19 @@ spec:
       args:
         - |
           while true; do
-            kubectl get pods --all-namespaces || true
-            sleep 30
+            echo "Attempting: kubectl get pods --all-namespaces"
+            kubectl get pods --all-namespaces || echo "Forbidden?"
+            sleep 10
           done
 EOF
+echo
 
-# -------------------------
-# Q15 & Q16 – winter.yaml + cpu-load namespace pods
-# -------------------------
+# ---------------- Q15–16: /opt/winter & cpu-load namespace ----------------
 echo "Preparing /opt/winter and winter pod..."
-mkdir -p /opt/winter
-cat >/opt/winter/winter.yaml <<'EOF'
+# No sudo here so script doesn't break in environments without sudo;
+# if mkdir fails, it won't stop the script.
+mkdir -p /opt/winter 2>/dev/null || echo "WARN: could not create /opt/winter, create it manually if needed."
+kubectl apply -f - <<'EOF'
 apiVersion: v1
 kind: Pod
 metadata:
@@ -401,46 +383,57 @@ metadata:
   namespace: default
 spec:
   containers:
-    - name: main
+    - name: logger
       image: busybox
       command: ["/bin/sh","-c"]
-      args: ["while true; do echo winter running; sleep 10; done"]
+      args:
+        - |
+          i=0
+          while true; do
+            echo "winter log line $i"
+            i=$((i+1))
+            sleep 5
+          done
 EOF
-
-kubectl apply -f /opt/winter/winter.yaml
+echo
 
 echo "Creating CPU load pods in namespace cpu-load..."
-kubectl apply -f - <<'EOF'
+kubectl apply -n cpu-load -f - <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
   name: cpu-busy-1
-  namespace: cpu-load
 spec:
   containers:
-    - name: load
+    - name: busy
       image: busybox
       command: ["/bin/sh","-c"]
-      args: ["while true; do :; done"]
+      args:
+        - |
+          while true; do
+            sha1sum /dev/urandom | head -c 1000 >/dev/null
+          done
 ---
 apiVersion: v1
 kind: Pod
 metadata:
   name: cpu-busy-2
-  namespace: cpu-load
 spec:
   containers:
-    - name: load
+    - name: busy
       image: busybox
       command: ["/bin/sh","-c"]
-      args: ["while true; do :; done"]
+      args:
+        - |
+          while true; do
+            sha1sum /dev/urandom | head -c 1000 >/dev/null
+          done
 EOF
+echo
 
-# -------------------------
-# Q17 – video-api deployment
-# -------------------------
+# ---------------- Q17: video-api Deployment ----------------
 echo "Creating video-api deployment..."
-kubectl apply -f - <<'EOF'
+kubectl apply -f - <<EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -462,48 +455,11 @@ spec:
           ports:
             - containerPort: 9090
 EOF
+echo
 
-# -------------------------
-# Q18 – client-ingress: write broken manifest to disk, don't apply
-# -------------------------
-echo "Creating client-svc and client-app (Ingress manifest will be on disk only)..."
-kubectl apply -f - <<'EOF'
-apiVersion: v1
-kind: Service
-metadata:
-  name: client-svc
-  namespace: default
-spec:
-  selector:
-    app: client-app
-  ports:
-    - port: 80
-      targetPort: 80
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: client-app
-  namespace: default
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: client-app
-  template:
-    metadata:
-      labels:
-        app: client-app
-    spec:
-      containers:
-        - name: web
-          image: nginx
-          ports:
-            - containerPort: 80
-EOF
-
-echo "Writing broken Ingress manifest for client-ingress to /root/client-ingress.yaml..."
-cat >/root/client-ingress.yaml <<'EOF'
+# ---------------- Q18: broken client-ingress manifest (file only) ----------------
+echo "Writing broken client-ingress manifest to ${BASE_DIR}/client-ingress.yaml..."
+cat > "${BASE_DIR}/client-ingress.yaml" <<'EOF'
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -514,20 +470,55 @@ spec:
     - http:
         paths:
           - path: /
-            pathType: InvalidType   # intentionally invalid
+            pathType: InvalidType
             backend:
               service:
                 name: client-svc
                 port:
                   number: 80
 EOF
+echo "NOTE: This manifest uses an invalid pathType on purpose. You'll apply and fix it during the exercise."
+echo
 
+# Also create client-svc + client-app for that ingress exercise
+echo "Creating client-svc and client-app..."
+kubectl apply -f - <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: client-app
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: client
+  template:
+    metadata:
+      labels:
+        app: client
+    spec:
+      containers:
+        - name: web
+          image: nginx
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: client-svc
+  namespace: default
+spec:
+  selector:
+    app: client
+  ports:
+    - port: 80
+      targetPort: 80
+EOF
+echo
 
-# -------------------------
-# Q19 – syncer deployment (no securityContext yet)
-# -------------------------
-echo "Creating syncer deployment..."
-kubectl apply -f - <<'EOF'
+# ---------------- Q19: syncer base deployment ----------------
+echo "Creating syncer deployment (no securityContext yet)..."
+kubectl apply -f - <<EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -547,24 +538,17 @@ spec:
         - name: sync
           image: nginx
 EOF
+echo
 
-# -------------------------
-# Q20 – namespace cachelayer (you create redis32 pod)
-# -------------------------
-echo "Namespace cachelayer is ready for redis32 pod."
-
-# -------------------------
-# Q21 – netpol-chain: pods + netpols with mismatched labels
-# -------------------------
-echo "Creating netpol-chain pods and network policies..."
-kubectl apply -f - <<'EOF'
+# ---------------- Q20: netpol-chain pods + networkpolicies ----------------
+echo "Creating netpol-chain pods and NetworkPolicies..."
+kubectl apply -n netpol-chain -f - <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
   name: frontend
-  namespace: netpol-chain
   labels:
-    role: wrong-frontend   # intentionally wrong
+    role: wrong-frontend
 spec:
   containers:
     - name: app
@@ -574,9 +558,8 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: backend
-  namespace: netpol-chain
   labels:
-    role: wrong-backend    # intentionally wrong
+    role: wrong-backend
 spec:
   containers:
     - name: app
@@ -586,9 +569,8 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: database
-  namespace: netpol-chain
   labels:
-    role: wrong-db         # intentionally wrong
+    role: wrong-db
 spec:
   containers:
     - name: app
@@ -598,18 +580,15 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: deny-all
-  namespace: netpol-chain
 spec:
   podSelector: {}
   policyTypes:
     - Ingress
-    - Egress
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-frontend-to-backend
-  namespace: netpol-chain
 spec:
   podSelector:
     matchLabels:
@@ -624,7 +603,6 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: allow-backend-to-db
-  namespace: netpol-chain
 spec:
   podSelector:
     matchLabels:
@@ -635,18 +613,18 @@ spec:
             matchLabels:
               role: backend
 EOF
+echo
 
-# -------------------------
-# Q22 – dashboard deployment paused rollout
-# -------------------------
-echo "Creating dashboard deployment and pausing rollout..."
-kubectl apply -f - <<'EOF'
+# ---------------- Q22: dashboard deployment (paused) ----------------
+echo "Creating paused dashboard deployment..."
+kubectl apply -f - <<EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: dashboard
   namespace: default
 spec:
+  paused: true
   replicas: 2
   selector:
     matchLabels:
@@ -660,14 +638,11 @@ spec:
         - name: web
           image: nginx:1.23
 EOF
+echo
 
-kubectl rollout pause deployment/dashboard
-
-# -------------------------
-# Q24 – hourly-report CronJob with bad restart policy
-# -------------------------
-echo "Creating misconfigured hourly-report CronJob..."
-kubectl apply -f - <<'EOF'
+# ---------------- Q24: hourly-report CronJob (misconfigured) ----------------
+echo "Creating hourly-report CronJob with wrong restartPolicy/backoffLimit..."
+kubectl apply -f - <<EOF
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -677,21 +652,21 @@ spec:
   schedule: "0 * * * *"
   jobTemplate:
     spec:
+      backoffLimit: 5
       template:
         spec:
-          restartPolicy: OnFailure   # you will adjust this
+          restartPolicy: OnFailure
           containers:
             - name: report
               image: busybox
               command: ["/bin/sh","-c"]
               args: ["echo hourly report; sleep 5"]
 EOF
+echo
 
-# -------------------------
-# Q25 – broken-app.yaml with mismatched selector/labels
-# -------------------------
-echo "Writing broken app manifest to /root/broken-app.yaml..."
-cat >/root/broken-app.yaml <<'EOF'
+# ---------------- Q25: broken-app manifest (file only) ----------------
+echo "Writing broken deployment manifest to ${BASE_DIR}/broken-app.yaml..."
+cat > "${BASE_DIR}/broken-app.yaml" <<'EOF'
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -701,16 +676,18 @@ spec:
   replicas: 2
   selector:
     matchLabels:
-      app: broken   # does NOT match template labels
+      app: something-else
   template:
     metadata:
       labels:
-        app: different-label   # mismatch on purpose
+        app: fixed-app
     spec:
       containers:
         - name: web
           image: nginx
 EOF
+echo "NOTE: Selector/template labels intentionally mismatched. You'll fix & apply this during the exercise."
+echo
 
-echo "=== CKAD practice environment is ready. ==="
-echo "You can now start working through the 25 questions."
+echo "=== CKAD practice environment prep COMPLETE ==="
+echo "Manifests written under: ${BASE_DIR}"
